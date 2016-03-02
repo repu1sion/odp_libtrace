@@ -12,7 +12,7 @@ See INSTALL for instructions on how to install libtrace.
 
 This directory contains source code for libtrace, a userspace library for 
 processing of network traffic capture from live interfaces or from offline
-traces.
+traces. 
 
 libtrace was primarily designed for use with the real-time interface to the 
 Waikato DAG Capture Point software running at The University of Waikato, 
@@ -22,7 +22,9 @@ In version 4.0, we have introduced an API for processing packets in parallel
 using multiple threads. See libtrace_parallel.h for a detailed description
 of the API.
 
+Libtrace should build and run on Linux, Mac OS X, FreeBSD and OpenBSD systems.
 Further information about libtrace, see
+
 http://research.wand.net.nz/software/libtrace.php
 
 Bugs should be reported by either emailing contact@wand.net.nz or filing

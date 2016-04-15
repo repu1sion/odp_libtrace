@@ -140,7 +140,7 @@
 #if RTE_VERSION >= RTE_VERSION_NUM(1, 8, 0, 1)
 #	define DPDK_USE_LOG_LEVEL 1
 #else
-#	define DPDK_USE_LOG_LEVEL 0
+#	define DPDK_USE_LOG_LEVEL 1
 #endif
 
 #include <rte_per_lcore.h>
@@ -174,7 +174,7 @@
 /* The minimum number of memory buffers per queue tx or rx. Search for
  * _MIN_RING_DESC in DPDK. The largest minimum is 64 for 10GBit cards.
  */
-#define MIN_NB_BUF 64
+#define MIN_NB_BUF 256
 
 /* Number of receive memory buffers to use
  * By default this is limited by driver to 4k and must be a multiple of 128.
@@ -955,7 +955,8 @@ static struct rte_eth_conf port_conf = {
 	.rx_adv_conf = {
 		.rss_conf = {
 			// .rss_key = &rss_key, // We set this per format
-			.rss_hf = ETH_RSS_IPV4_UDP | ETH_RSS_IPV6 | ETH_RSS_IPV4 | ETH_RSS_IPV4_TCP | ETH_RSS_IPV6_TCP | ETH_RSS_IPV6_UDP,
+			.rss_hf = ETH_RSS_IP | ETH_RSS_UDP | ETH_RSS_TCP,
+			//.rss_hf = ETH_RSS_IPV4_UDP | ETH_RSS_IPV6 | ETH_RSS_IPV4 | ETH_RSS_IPV4_TCP | ETH_RSS_IPV6_TCP | ETH_RSS_IPV6_UDP,
 		},
 	},
 	.intr_conf = {
@@ -2192,7 +2193,8 @@ static void dpdk_get_stats(libtrace_t *trace, libtrace_stat_t *stats) {
 
 	/* Not that we support adding filters but if we did this
 	 * would work */
-	stats->filtered += dev_stats.fdirmiss;
+	//stats->filtered += dev_stats.fdirmiss;
+	stats->filtered += 0;
 
 	stats->dropped_valid = true;
 	stats->dropped = dev_stats.imissed;

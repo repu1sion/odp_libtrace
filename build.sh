@@ -7,3 +7,4 @@ export RTE_TARGET=x86_64-native-linuxapp-gcc
 ./configure --with-dpdk=yes CFLAGS=-shared-libgcc
 make
 sudo make install
+sudo ldconfig

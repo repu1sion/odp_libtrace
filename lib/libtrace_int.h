@@ -1262,6 +1262,10 @@ void bpf_constructor(void);
 /** Constructor for Intels DPDK format module */
 void dpdk_constructor(void);
 #endif
+//ODP support
+/** Constructor for the DUCK format module */
+void odp_constructor(void);
+
 
 /** Extracts the RadioTap flags from a wireless link header
  *

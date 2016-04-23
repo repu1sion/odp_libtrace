@@ -49,6 +49,9 @@ export CFLAGS += $(SAVED_CFLAGS)
 export CXXFLAGS += $(SAVED_CXXFLAGS)
 endif
 
+#ODP support
+NATIVEFORMATS+= format_odp.c
+
 libtrace_la_SOURCES = trace.c trace_parallel.c common.h \
 		format_erf.c format_pcap.c format_legacy.c \
 		format_rt.c format_helper.c format_helper.h format_pcapfile.c \

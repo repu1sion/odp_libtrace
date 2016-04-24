@@ -16,10 +16,16 @@
 #include "rt_protocol.h"
 
 
-#define DATA(x) ((struct duck_format_data_t *)x->format_data)
+#define FORMAT(x) ((struct odp_format_data_t *)x->format_data)
 #define DATAOUT(x) ((struct duck_format_data_out_t *)x->format_data)
 
 #define OUTPUT DATAOUT(libtrace)
+
+struct odp_format_data_t {
+	int pvt;
+	/* Our parallel streams */
+	libtrace_list_t *per_stream;
+};
 
 struct duck_format_data_t {
 	char *path;
@@ -35,10 +41,64 @@ struct duck_format_data_out_t {
 	int dag_version;	
 };
 
-static int duck_init_input(libtrace_t *libtrace) {
-	libtrace->format_data = malloc(sizeof(struct duck_format_data_t));
 
-	DATA(libtrace)->dag_version = 0;
+static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
+{
+	int ret; //returned error codes
+	char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
+	int num_cpu; /* The number of CPUs in the system */
+	int my_cpu; /* The CPU number we want to bind to */
+
+	//we need to set command line for DPDK which we will pass through ODP
+	char* argv[] = {"libtrace",
+	                "-c", cpu_number,
+	                "-n", "1",
+	                "--proc-type", "auto",
+	                "--file-prefix", mem_map,
+	                "-m", "512", NULL};
+
+	int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+
+	/* Get the number of cpu cores in the system and use the last core
+	 * on the correct numa node */
+	num_cpu = sysconf(_SC_NPROCESSORS_ONLN);
+	if (num_cpu <= 0) {
+		perror("sysconf(_SC_NPROCESSORS_ONLN) failed."
+		       " Falling back to the first core.");
+		num_cpu = 1; /* fallback to the first core */
+	}
+
+	my_cpu = 0;	//XXX
+
+	//XXX - odp init should be here
+
+
+	return 0;
+}
+
+
+/* Initialises an input trace using the capture format. 
+   @param libtrace 	The input trace to be initialised */
+static int odp_init_input(libtrace_t *libtrace) 
+{
+	char err[500] = {0};
+
+	//this is a common practice in every format to allocate specific struct and then init it fields 
+	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
+	//XXX - here we need to init all the data in odp_format_data_t
+	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
+
+	/* Make our first stream XXX - add our struct per stream */
+	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
+	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
+
+	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
+	{
+		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
+		free(libtrace->format_data);
+		libtrace->format_data = NULL;
+		return -1;
+	}
 	return 0;
 }
 
@@ -289,13 +349,15 @@ static void odp_help(void) {
 	return;
 }
 
+/* A libtrace capture format module */
+/* All functions should return -1, or NULL on failure */
 static struct libtrace_format_t odp = {
-        "odp",
-        "$Id$",
-        TRACE_FORMAT_ODP,
-	NULL,				/* probe filename */
-	NULL,				/* probe magic */
-        duck_init_input,	        /* init_input */
+        "odp",				/* name used in URI to identify capture format - odp:iface */
+        "$Id$",				/* version of this module */
+        TRACE_FORMAT_ODP,		/* The RT protocol type of this module */
+	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
+	NULL,				/* probe magic - NOT NEEDED*/
+        odp_init_input,	        	/* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input */
         duck_start_input,	        /* start_input */
         NULL,                           /* pause_input */

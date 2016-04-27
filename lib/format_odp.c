@@ -3,6 +3,7 @@
  */
 
 #include <stdlib.h>
+#include <unistd.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdio.h>
@@ -15,6 +16,13 @@
 #include "wandio.h"
 #include "rt_protocol.h"
 
+#include <odp_api.h>
+//#include <odp/helper/linux.h>
+//#include <odp/helper/eth.h>
+//#include <odp/helper/ip.h>
+
+#define SHM_PKT_POOL_SIZE      (512*2048)
+#define SHM_PKT_POOL_BUF_SIZE  1856
 
 #define FORMAT(x) ((struct odp_format_data_t *)x->format_data)
 #define DATAOUT(x) ((struct duck_format_data_out_t *)x->format_data)
@@ -26,6 +34,21 @@ struct odp_format_data_t {
 	/* Our parallel streams */
 	libtrace_list_t *per_stream;
 };
+
+//----- DPDK stream part. Maybe we don't need it -------------------------------
+#if 0
+struct dpdk_per_stream_t
+{
+	uint16_t queue_id;
+	uint64_t ts_last_sys; /* System timestamp of our most recent packet in nanoseconds */
+	struct rte_mempool *mempool;
+	int lcore;
+}
+
+#define DPDK_EMPTY_STREAM {-1, 0, NULL, -1}
+
+typedef struct dpdk_per_stream_t dpdk_per_stream_t;
+#endif
 
 struct duck_format_data_t {
 	char *path;
@@ -48,13 +71,21 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
 	int num_cpu; /* The number of CPUs in the system */
 	int my_cpu; /* The CPU number we want to bind to */
+	//odp vars
+	odp_pool_t pool;
+	odp_pktio_t pktio;
+        odp_pool_param_t params;
+        odp_pktio_param_t pktio_param;
+        odp_pktin_queue_param_t pktin_param;
+	char devname[] = "odp";
 
+	//DPDK setup -----------------------------------------------------------
 	//we need to set command line for DPDK which we will pass through ODP
 	char* argv[] = {"libtrace",
 	                "-c", cpu_number,
 	                "-n", "1",
 	                "--proc-type", "auto",
-	                "--file-prefix", mem_map,
+	                "--file-prefix",
 	                "-m", "512", NULL};
 
 	int argc = sizeof(argv) / sizeof(argv[0]) - 1;
@@ -62,7 +93,8 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	/* Get the number of cpu cores in the system and use the last core
 	 * on the correct numa node */
 	num_cpu = sysconf(_SC_NPROCESSORS_ONLN);
-	if (num_cpu <= 0) {
+	if (num_cpu <= 0) 
+	{
 		perror("sysconf(_SC_NPROCESSORS_ONLN) failed."
 		       " Falling back to the first core.");
 		num_cpu = 1; /* fallback to the first core */
@@ -70,8 +102,80 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 
 	my_cpu = 0;	//XXX
 
-	//XXX - odp init should be here
+	//ODP setup ------------------------------------------------------------
+	/* Init ODP before calling anything else */
+        if (odp_init_global(NULL, NULL)) 
+	{
+                fprintf(stderr, "Error: ODP global init failed.\n");
+                exit(EXIT_FAILURE);
+        }
 
+        /* Create thread structure for ODP */		//XXX - maybe ODP_THREAD_CONTROL ?
+        if (odp_init_local(ODP_THREAD_WORKER)) 
+	{
+                fprintf(stderr, "Error: ODP local init failed.\n");
+                exit(EXIT_FAILURE);
+        }
+
+        /* Creating pool */
+        pool = odp_pool_lookup("packet_pool");
+        if (pool == ODP_POOL_INVALID) 
+	{
+                /* Create packet pool */
+                odp_pool_param_init(&params);                   //init pool with default values
+                params.pkt.seg_len = SHM_PKT_POOL_BUF_SIZE;
+                params.pkt.len     = SHM_PKT_POOL_BUF_SIZE;
+                params.pkt.num     = SHM_PKT_POOL_SIZE/SHM_PKT_POOL_BUF_SIZE;
+                params.type        = ODP_POOL_PACKET;
+
+                pool = odp_pool_create("packet_pool", &params);
+
+                if (pool == ODP_POOL_INVALID) {
+                        fprintf(stderr, "Error: packet pool create failed.\n");
+                        exit(EXIT_FAILURE);
+                }
+                odp_pool_print(pool);
+        } 
+	else 
+                fprintf(stdout, "packet pool have been created.\n");
+
+        //----- setting up pktio ------------------------------------------------------
+
+        //setting pktio_param
+        odp_pktio_param_init(&pktio_param);
+        pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
+
+        /* Open a packet IO instance */
+        pktio = odp_pktio_open(devname, pool, &pktio_param);
+        if (pktio == ODP_PKTIO_INVALID) {
+                fprintf(stderr, "  Error: pktio create failed %s\n", devname);
+                return 1;
+        }
+
+        //setting queue param
+        odp_pktin_queue_param_init(&pktin_param);
+        pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
+        pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
+
+	//configure in queue
+        if (odp_pktin_queue_config(pktio, &pktin_param))
+        {
+                fprintf(stderr, "  Error: queue config failed %s\n", devname);
+                return 1;
+        }
+
+        //set OUT queue. NULL as param means default values will be used
+        if (odp_pktout_queue_config(pktio, NULL))
+                fprintf(stderr, "Error: pktout config failed\n");
+
+	//start pktio
+        fprintf(stdout, "going to start pktio\n");
+        ret = odp_pktio_start(pktio);
+        if (ret != 0)
+                fprintf(stderr, "Error: unable to start pktio\n");
+
+        printf("  created pktio:%02i, queue mode\n default pktio%02i-INPUT queue\n",
+                (int)pktio, (int)pktio);
 
 	return 0;
 }
@@ -81,6 +185,9 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
    @param libtrace 	The input trace to be initialised */
 static int odp_init_input(libtrace_t *libtrace) 
 {
+#if 0
+	dpdk_per_stream_t stream = DPDK_EMPTY_STREAM;
+#endif
 	char err[500] = {0};
 
 	//this is a common practice in every format to allocate specific struct and then init it fields 
@@ -88,9 +195,11 @@ static int odp_init_input(libtrace_t *libtrace)
 	//XXX - here we need to init all the data in odp_format_data_t
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 
+#if 0
 	/* Make our first stream XXX - add our struct per stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
+#endif
 
 	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
@@ -191,7 +300,7 @@ static int duck_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 	packet->type = rt_type;
 
 	if (libtrace->format_data == NULL) {
-		if (duck_init_input(libtrace))
+		if (odp_init_input(libtrace))
 			return -1;
 	}
 
@@ -216,6 +325,7 @@ static int duck_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) {
 
 	flags |= TRACE_PREP_OWN_BUFFER;
 	
+#if 0
 	if (DATA(libtrace)->dag_version == 0) {
 		/* Read in the duck version from the start of the trace */
 		if ((numbytes = wandio_read(libtrace->io, &version, 
@@ -246,6 +356,7 @@ static int duck_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) {
 				DATA(libtrace)->dag_version);
 		return -1;
 	}
+#endif
 
 	if ((numbytes = wandio_read(libtrace->io, packet->buffer,
 					(size_t)duck_size)) != (int)duck_size) {

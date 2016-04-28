@@ -100,7 +100,7 @@ AC_SYS_LARGEFILE
 
 LIBPKTDUMP_LIBS="-ltrace "
 ADD_LDFLAGS="$ADD_LDFLAGS -L\$(abs_top_srcdir)/lib"
-LIBTRACE_LIBS=""
+LIBTRACE_LIBS="-lodp-dpdk"
 TOOLS_LIBS=""
 
 CFLAGS="$CFLAGS -Wall -Wmissing-prototypes -Wextra -DLT_BUILDING_DLL=1"

@@ -159,6 +159,7 @@ static void trace_init(void)
 #ifdef HAVE_DPDK
         dpdk_constructor();
 #endif
+	odp_constructor();
 	}
 }
 

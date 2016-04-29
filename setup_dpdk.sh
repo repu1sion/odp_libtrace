@@ -1,5 +1,8 @@
 #!/bin/bash
 
+export RTE_SDK=/mnt/raw/gdwk/dpdk/dpdk/
+export RTE_TARGET=x86_64-native-linuxapp-gcc
+
 # loading dpdk kernel modules
 cd $RTE_SDK/$RTE_TARGET/kmod
 sudo modprobe uio

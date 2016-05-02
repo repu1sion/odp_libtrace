@@ -25,12 +25,13 @@
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
 #define FORMAT(x) ((struct odp_format_data_t *)x->format_data)
-#define DATAOUT(x) ((struct duck_format_data_out_t *)x->format_data)
-
+#define DATAOUT(x) ((struct odp_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
 struct odp_format_data_t {
 	int pvt;
+	unsigned int pkts_read;
+	odp_pktio_t pktio;
 	/* Our parallel streams */
 	libtrace_list_t *per_stream;
 };
@@ -50,20 +51,23 @@ struct dpdk_per_stream_t
 typedef struct dpdk_per_stream_t dpdk_per_stream_t;
 #endif
 
+#if 0
 struct duck_format_data_t {
 	char *path;
 	int dag_version;
 };
+#endif
 
-struct duck_format_data_out_t {
+struct odp_format_data_out_t {
 	char *path;
+/*
 	int level;
 	int compress_type;
 	int fileflag;
+*/
 	iow_t *file;
-	int dag_version;	
+//	int dag_version;	
 };
-
 
 static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
@@ -73,7 +77,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	int my_cpu; /* The CPU number we want to bind to */
 	//odp vars
 	odp_pool_t pool;
-	odp_pktio_t pktio;
+	//odp_pktio_t pktio;
         odp_pool_param_t params;
         odp_pktio_param_t pktio_param;
         odp_pktin_queue_param_t pktin_param;
@@ -146,8 +150,8 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
 
         /* Open a packet IO instance */
-        pktio = odp_pktio_open(devname, pool, &pktio_param);
-        if (pktio == ODP_PKTIO_INVALID) {
+        FORMAT(libtrace)->pktio = odp_pktio_open(devname, pool, &pktio_param);
+        if (FORMAT(libtrace)->pktio == ODP_PKTIO_INVALID) {
                 fprintf(stderr, "  Error: pktio create failed %s\n", devname);
                 return 1;
         }
@@ -158,24 +162,15 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
 
 	//configure in queue
-        if (odp_pktin_queue_config(pktio, &pktin_param))
+        if (odp_pktin_queue_config(FORMAT(libtrace)->pktio, &pktin_param))
         {
                 fprintf(stderr, "  Error: queue config failed %s\n", devname);
                 return 1;
         }
 
         //set OUT queue. NULL as param means default values will be used
-        if (odp_pktout_queue_config(pktio, NULL))
+        if (odp_pktout_queue_config(FORMAT(libtrace)->pktio, NULL))
                 fprintf(stderr, "Error: pktout config failed\n");
-
-	//start pktio
-        fprintf(stdout, "going to start pktio\n");
-        ret = odp_pktio_start(pktio);
-        if (ret != 0)
-                fprintf(stderr, "Error: unable to start pktio\n");
-
-        printf("  created pktio:%02i, queue mode\n default pktio%02i-INPUT queue\n",
-                (int)pktio, (int)pktio);
 
 	return 0;
 }
@@ -185,22 +180,19 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
    @param libtrace 	The input trace to be initialised */
 static int odp_init_input(libtrace_t *libtrace) 
 {
+	char err[500] = {0};
 #if 0
 	dpdk_per_stream_t stream = DPDK_EMPTY_STREAM;
 #endif
-	char err[500] = {0};
-
-	//this is a common practice in every format to allocate specific struct and then init it fields 
+	//init all the data in odp_format_data_t
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
-	//XXX - here we need to init all the data in odp_format_data_t
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
-
+	FORMAT(libtrace)->pkts_read = 0;
 #if 0
 	/* Make our first stream XXX - add our struct per stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
 #endif
-
 	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
 		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
@@ -211,21 +203,33 @@ static int odp_init_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int duck_init_output(libtrace_out_t *libtrace) {
-	libtrace->format_data = malloc(sizeof(struct duck_format_data_out_t));
-	
+//Initialises an output trace using the capture format.
+static int odp_init_output(libtrace_out_t *libtrace) {
+	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
+#if 0
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
+#endif
 	OUTPUT->file = 0;
-	OUTPUT->dag_version = 0;
+//	OUTPUT->dag_version = 0;
+
+	//this is same we do in odp_init_input(), but with odp_format_data_out_t struct
+	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
+		trace_set_err_out(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
+		free(libtrace->format_data);
+		libtrace->format_data = NULL;
+		return -1;
+	}
+
 	return 0;
 }
 
-static int duck_config_output(libtrace_out_t *libtrace, 
-				trace_option_output_t option,
-				void *data) {
-	switch (option) {
+//XXX - can comment it out, left from duck.
+static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
+{
+	switch (option) 
+	{
 		case TRACE_OPTION_OUTPUT_COMPRESS:
 			OUTPUT->level = *(int *)data;
 			return 0;
@@ -236,15 +240,16 @@ static int duck_config_output(libtrace_out_t *libtrace,
 			OUTPUT->fileflag = *(int *)data;
 			return 0;
 		default:
-			trace_set_err_out(libtrace, TRACE_ERR_UNKNOWN_OPTION,
-					"Unknown option");
+			trace_set_err_out(libtrace, TRACE_ERR_UNKNOWN_OPTION, "Unknown option");
 			return -1;
 	}
 	assert(0);
 }
 
-static int duck_start_input(libtrace_t *libtrace) {
-	
+static int odp_start_input(libtrace_t *libtrace) 
+{
+	int ret;
+
 	if (libtrace->io)
 		/* File already open */
 		return 0;
@@ -253,10 +258,19 @@ static int duck_start_input(libtrace_t *libtrace) {
 	if (!libtrace->io)
 		return -1;
 
+	//start pktio
+        fprintf(stdout, "going to start pktio\n");
+        ret = odp_pktio_start(FORMAT(libtrace)->pktio);
+        if (ret != 0)
+                fprintf(stderr, "Error: unable to start pktio\n");
+
+        printf("  created pktio:%02i, queue mode\n default pktio%02i-INPUT queue\n",
+                (int)FORMAT(libtrace)->pktio, (int)FORMAT(libtrace)->pktio);
+
 	return 0;
 }
 
-static int duck_start_output(libtrace_out_t *libtrace) {
+static int odp_start_output(libtrace_out_t *libtrace) {
 	OUTPUT->file = trace_open_file_out(libtrace, 
 						OUTPUT->compress_type,
 						OUTPUT->level,
@@ -267,20 +281,30 @@ static int duck_start_output(libtrace_out_t *libtrace) {
 	return 0;
 }
 
-static int duck_fin_input(libtrace_t *libtrace) {
+static int odp_fin_input(libtrace_t *libtrace) 
+{
 	wandio_destroy(libtrace->io);
+
+        odp_pktio_stop(FORMAT(libtrace)->pktio);
+        odp_pktio_close(FORMAT(libtrace)->pktio);
+
 	free(libtrace->format_data);
 
 	return 0;
 }
 
-static int duck_fin_output(libtrace_out_t *libtrace) {
+static int odp_fin_output(libtrace_out_t *libtrace) 
+{
 	wandio_wdestroy(OUTPUT->file);
+	//XXX - we have stopped pktio already in odp_fin_input(). 
+	//Probably there is a need to stop it also here, but probably not.
+
 	free(libtrace->format_data);
 	return 0;
 }
 
-static int duck_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
+//should be called in odp_read_packet()
+static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) {
 
         if (packet->buffer != buffer &&
@@ -295,7 +319,7 @@ static int duck_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 
 
         packet->buffer = buffer;
-        packet->header = NULL;
+        packet->header = buffer;	//XXX - maybe need to set correct offsets here.
 	packet->payload = buffer;
 	packet->type = rt_type;
 
@@ -307,8 +331,53 @@ static int duck_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 	return 0;
 }
 
-static int duck_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) {
+static int odp_read_pack()
+{
+	odp_packet_t pkt;
+	odp_event_t ev;
+	u_char *l2h;	//l2 header
+	unsigned int pktlen;
+	unsigned int processed_packets = 0;
 
+        fprintf(stdout, "odp_read_pack() start\n");
+
+	while (1) 
+	{
+                /* Use schedule to get buf from any input queue */
+                ev = odp_schedule(NULL, ODP_SCHED_WAIT);
+                pkt = odp_packet_from_event(ev);
+                if (!odp_packet_is_valid(pkt))
+                        continue;
+
+                //Returns pointer to the start of the layer 2 header
+                l2h = (u_char *)odp_packet_l2_ptr(pkt, NULL);
+		//uint32_t odp_packet_len(odp_packet_t pkt);
+                pktlen = odp_packet_len(pkt);
+
+		processed_packets++;
+                odp_packet_free(pkt);
+                fprintf(stdout, "freeing packet #%d \n", processed_packets);
+	}
+
+        fprintf(stdout, "odp_read_pack() exits\n");
+}
+
+/* Reads the next packet from an input trace into the provided packet 
+ * structure.
+ *
+ * @param libtrace      The input trace to read from
+ * @param packet        The libtrace packet to read into
+ * @return The size of the packet read (in bytes) including the capture
+ * framing header, or -1 if an error occurs. 0 is returned in the
+ * event of an EOF. 
+ *
+ * If no packets are available for reading, this function should block
+ * until one appears or return 0 if the end of a trace file has been
+ * reached.
+ */
+
+static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
+{
 	int numbytes = 0;
 	uint32_t version = 0;
 	unsigned int duck_size;
@@ -323,41 +392,12 @@ static int duck_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) {
                 }
         }
 
-	flags |= TRACE_PREP_OWN_BUFFER;
+//	flags |= TRACE_PREP_OWN_BUFFER;
+
+
 	
+
 #if 0
-	if (DATA(libtrace)->dag_version == 0) {
-		/* Read in the duck version from the start of the trace */
-		if ((numbytes = wandio_read(libtrace->io, &version, 
-					sizeof(version))) != sizeof(uint32_t)) {
-			trace_set_err(libtrace, errno, 
-					"Reading DUCK version failed");
-			return -1;
-		}
-		if (numbytes == 0) {
-			return 0;
-		}
-		DATA(libtrace)->dag_version = bswap_le_to_host32(version);
-	}
-	
-
-	if (DATA(libtrace)->dag_version == TRACE_RT_DUCK_2_4) {
-		duck_size = sizeof(duck2_4_t);
-		packet->type = TRACE_RT_DUCK_2_4;
-	} else if (DATA(libtrace)->dag_version == TRACE_RT_DUCK_2_5) {
-		duck_size = sizeof(duck2_5_t);
-		packet->type = TRACE_RT_DUCK_2_5;
-	} else if (DATA(libtrace)->dag_version == TRACE_RT_DUCK_5_0) {
-		duck_size = sizeof(duck5_0_t);
-		packet->type = TRACE_RT_DUCK_5_0;
-	} else {
-		trace_set_err(libtrace, TRACE_ERR_BAD_PACKET,
-				"Unrecognised DUCK version %i", 
-				DATA(libtrace)->dag_version);
-		return -1;
-	}
-#endif
-
 	if ((numbytes = wandio_read(libtrace->io, packet->buffer,
 					(size_t)duck_size)) != (int)duck_size) {
 		if (numbytes == -1) {
@@ -371,9 +411,9 @@ static int duck_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) {
 			trace_set_err(libtrace, TRACE_ERR_BAD_PACKET, "Truncated DUCK packet");
 		}
 	}
+#endif
 
-	if (duck_prepare_packet(libtrace, packet, packet->buffer, packet->type,
-				flags)) 
+	if (odp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
 		return -1;
 	
 	return numbytes;
@@ -443,10 +483,10 @@ static int duck_get_wire_length(const libtrace_packet_t *packet UNUSED)
 	return 0;
 }
 
-static libtrace_linktype_t duck_get_link_type(
+static libtrace_linktype_t odp_get_link_type(
 				const libtrace_packet_t *packet UNUSED) 
 {
-	return TRACE_TYPE_DUCK;
+	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
 
 /* <== *** ==> */
@@ -469,19 +509,19 @@ static struct libtrace_format_t odp = {
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
         odp_init_input,	        	/* init_input - Initialises an input trace using the capture format */
-        NULL,                           /* config_input */
-        duck_start_input,	        /* start_input */
+        NULL,                           /* config_input - Sets value to some option */
+        odp_start_input,	        /* start_input - Starts or unpauses an input trace (also opens file or device for reading)*/
         NULL,                           /* pause_input */
-        duck_init_output,               /* init_output */
-        duck_config_output,             /* config_output */
-        duck_start_output,              /* start_output */
-        duck_fin_input,	               	/* fin_input */
-        duck_fin_output,                /* fin_output */
-        duck_read_packet,        	/* read_packet */
-        duck_prepare_packet,		/* prepare_packet */
+        odp_init_output,                /* init_output - Initialises an output trace using the capture format. */
+        odp_config_output,             /* config_output */
+        odp_start_output,              /* start_output */
+        odp_fin_input,	               	/* fin_input - Stops capture input data.*/
+        odp_fin_output,                /* fin_output */
+        duck_read_packet,        	/* read_packet  - Reads the next packet from an input trace into the provided packet structure*/
+        odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet. Used in read_packet*/
 	NULL,                           /* fin_packet */
-        duck_write_packet,              /* write_packet */
-        duck_get_link_type,    		/* get_link_type */
+        duck_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+        odp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
         NULL,          			/* get_erf_timestamp */

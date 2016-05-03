@@ -62,11 +62,9 @@ struct duck_format_data_t {
 
 struct odp_format_data_out_t {
 	char *path;
-/*
 	int level;
 	int compress_type;
 	int fileflag;
-*/
 	iow_t *file;
 //	int dag_version;	
 };
@@ -152,8 +150,8 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
 
         /* Open a packet IO instance */
-        FORMAT(libtrace)->pktio = odp_pktio_open(devname, pool, &pktio_param);
-        if (FORMAT(libtrace)->pktio == ODP_PKTIO_INVALID) {
+        format_data->pktio = odp_pktio_open(devname, pool, &pktio_param);
+        if (format_data->pktio == ODP_PKTIO_INVALID) {
                 fprintf(stderr, "  Error: pktio create failed %s\n", devname);
                 return 1;
         }
@@ -164,19 +162,18 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
 
 	//configure in queue
-        if (odp_pktin_queue_config(FORMAT(libtrace)->pktio, &pktin_param))
+        if (odp_pktin_queue_config(format_data->pktio, &pktin_param))
         {
                 fprintf(stderr, "  Error: queue config failed %s\n", devname);
                 return 1;
         }
 
         //set OUT queue. NULL as param means default values will be used
-        if (odp_pktout_queue_config(FORMAT(libtrace)->pktio, NULL))
+        if (odp_pktout_queue_config(format_data->pktio, NULL))
                 fprintf(stderr, "Error: pktout config failed\n");
 
 	return 0;
 }
-
 
 /* Initialises an input trace using the capture format. 
    @param libtrace 	The input trace to be initialised */
@@ -206,15 +203,17 @@ static int odp_init_input(libtrace_t *libtrace)
 }
 
 //Initialises an output trace using the capture format.
-static int odp_init_output(libtrace_out_t *libtrace) {
+static int odp_init_output(libtrace_out_t *libtrace) 
+{
+	char err[500] = {0};
+
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
-#if 0
+#if 1
+	OUTPUT->file = 0;
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 #endif
-	OUTPUT->file = 0;
-//	OUTPUT->dag_version = 0;
 
 	//this is same we do in odp_init_input(), but with odp_format_data_out_t struct
 	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
@@ -227,19 +226,19 @@ static int odp_init_output(libtrace_out_t *libtrace) {
 	return 0;
 }
 
-//XXX - can comment it out, left from duck.
+//XXX - doesn't set any option yet
 static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
 	switch (option) 
 	{
 		case TRACE_OPTION_OUTPUT_COMPRESS:
-			OUTPUT->level = *(int *)data;
+			//OUTPUT->level = *(int *)data;
 			return 0;
 		case TRACE_OPTION_OUTPUT_COMPRESSTYPE:
-			OUTPUT->compress_type = *(int *)data;
+			//OUTPUT->compress_type = *(int *)data;
 			return 0;
 		case TRACE_OPTION_OUTPUT_FILEFLAGS:
-			OUTPUT->fileflag = *(int *)data;
+			//OUTPUT->fileflag = *(int *)data;
 			return 0;
 		default:
 			trace_set_err_out(libtrace, TRACE_ERR_UNKNOWN_OPTION, "Unknown option");
@@ -335,7 +334,7 @@ static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 	return 0;
 }
 
-static int odp_read_pack()
+static int odp_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
 	odp_event_t ev;
@@ -401,7 +400,7 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 //	flags |= TRACE_PREP_OWN_BUFFER;
 
 	//2. Read 1 packet from odp
-	numbytes = odp_read_pack();
+	numbytes = odp_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
 		trace_set_err(libtrace, errno, "Reading odp packet failed");
@@ -453,29 +452,22 @@ static void odp_fin_packet(libtrace_packet_t *packet)
 {
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-                odp_packet_free(pkt);
+		//XXX - need to free it somewhere, but we don't have a pointer to libtrace here
+                //odp_packet_free(FORMAT(libtrace)->pkt);
 		packet->buffer = NULL;
 	}
 }
 
 
-static int duck_write_packet(libtrace_out_t *libtrace, 
+static int odp_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
 
 	int numbytes = 0;
-	uint32_t duck_version;
-
-	if (packet->type != TRACE_RT_DUCK_2_4 
-			&& packet->type != TRACE_RT_DUCK_2_5 &&
-			packet->type != TRACE_RT_DUCK_5_0) {
-		trace_set_err_out(libtrace, TRACE_ERR_BAD_PACKET,
-				"Only DUCK packets may be written to a DUCK file");
-		return -1;
-	}
 	
 	assert(OUTPUT->file);
-
+//XXX - todo
+#if 0
 	if (OUTPUT->dag_version == 0) {
 	/* Writing the DUCK version will help with reading it back in later! */
 		duck_version = bswap_host_to_le32(packet->type);
@@ -494,37 +486,47 @@ static int duck_write_packet(libtrace_out_t *libtrace,
 		trace_set_err_out(libtrace, errno, "Writing DUCK failed");
 		return -1;
 	}
+#endif
 	return numbytes;
 }
 
-static int duck_get_capture_length(const libtrace_packet_t *packet) {
-	switch(packet->type) {
-		case TRACE_RT_DUCK_2_4:
-			return sizeof(duck2_4_t);
-		case TRACE_RT_DUCK_2_5:
-			return sizeof(duck2_5_t);
-		case TRACE_RT_DUCK_5_0:
-			return sizeof(duck5_0_t);
-		default:
-			trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET,
-					"Not a duck packet");
-			return -1;
+//Returns the payload length of the captured packet record
+static int odp_get_capture_length(const libtrace_packet_t *packet)
+{
+	//XXX - just a simple solution, could be not correct if we have an additional header
+	if (packet)
+		return trace_get_capture_length(packet);
+	else
+	{
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
 	}
-	return 0;
 }
 
-static int duck_get_framing_length(const libtrace_packet_t *packet UNUSED) 
+static int odp_get_framing_length(const libtrace_packet_t *packet) 
 {
-	return 0;
+	if (packet)
+		return trace_get_framing_length(packet);
+	else
+	{
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
+	}
 }
 
-static int duck_get_wire_length(const libtrace_packet_t *packet UNUSED) 
+//Returns the original length of the packet as it was on the wire
+static int odp_get_wire_length(const libtrace_packet_t *packet) 
 {
-	return 0;
+	if (packet)
+		return trace_get_wire_length(packet);
+	else
+	{
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
+	}
 }
 
-static libtrace_linktype_t odp_get_link_type(
-				const libtrace_packet_t *packet UNUSED) 
+static libtrace_linktype_t odp_get_link_type(const libtrace_packet_t *packet UNUSED) 
 {
 	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
@@ -557,10 +559,10 @@ static struct libtrace_format_t odp = {
         odp_start_output,              /* start_output */
         odp_fin_input,	               	/* fin_input - Stops capture input data.*/
         odp_fin_output,                /* fin_output */
-        duck_read_packet,        	/* read_packet  - Reads the next packet from an input trace into the provided packet structure*/
+        odp_read_packet,        	/* read_packet  - Reads the next packet from an input trace into the provided packet structure*/
         odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet. Used in read_packet*/
 	odp_fin_packet,                 /* fin_packet */
-        duck_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+        odp_write_packet,               /* write_packet - Write a libtrace packet to an output trace */
         odp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
@@ -571,9 +573,9 @@ static struct libtrace_format_t odp = {
         NULL,                   	/* seek_erf */
         NULL,                           /* seek_timeval */
         NULL,                           /* seek_seconds */
-        duck_get_capture_length,  	/* get_capture_length */
-        duck_get_wire_length,  		/* get_wire_length */
-        duck_get_framing_length, 	/* get_framing_length */
+        odp_get_capture_length,  	/* get_capture_length */
+        odp_get_wire_length,  		/* get_wire_length */
+        odp_get_framing_length, 	/* get_framing_length */
         NULL,         			/* set_capture_length */
 	NULL,				/* get_received_packets */
 	NULL,				/* get_filtered_packets */

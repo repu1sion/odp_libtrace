@@ -32,6 +32,8 @@ struct odp_format_data_t {
 	int pvt;
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
+	odp_packet_t pkt;	//ptr for current packet which we pass to prepare_packet()
+	u_char *l2h;		//l2 header for current packet
 	/* Our parallel streams */
 	libtrace_list_t *per_stream;
 };
@@ -303,10 +305,12 @@ static int odp_fin_output(libtrace_out_t *libtrace)
 	return 0;
 }
 
+//Converts a buffer containing a packet record into a libtrace packet
 //should be called in odp_read_packet()
 static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
-		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) {
-
+		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
+{
+	//XXX - do we need it?
         if (packet->buffer != buffer &&
                         packet->buf_control == TRACE_CTRL_PACKET) {
                 free(packet->buffer);
@@ -315,14 +319,14 @@ static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
         if ((flags & TRACE_PREP_OWN_BUFFER) == TRACE_PREP_OWN_BUFFER) {
                 packet->buf_control = TRACE_CTRL_PACKET;
         } else
-                packet->buf_control = TRACE_CTRL_EXTERNAL;
-
+                packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
 
         packet->buffer = buffer;
-        packet->header = buffer;	//XXX - maybe need to set correct offsets here.
-	packet->payload = buffer;
+        packet->header = buffer;
+	packet->payload = FORMAT(libtrace)->l2h;
 	packet->type = rt_type;
 
+	//XXX - looks strange, maybe remove it later
 	if (libtrace->format_data == NULL) {
 		if (odp_init_input(libtrace))
 			return -1;
@@ -333,33 +337,39 @@ static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 
 static int odp_read_pack()
 {
-	odp_packet_t pkt;
+	int numbytes;
 	odp_event_t ev;
-	u_char *l2h;	//l2 header
-	unsigned int pktlen;
-	unsigned int processed_packets = 0;
+	unsigned int processed_pkts = 0;
 
         fprintf(stdout, "odp_read_pack() start\n");
 
 	while (1) 
 	{
-                /* Use schedule to get buf from any input queue */
+                /* Use schedule to get buf from any input queue. 
+		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
                 ev = odp_schedule(NULL, ODP_SCHED_WAIT);
-                pkt = odp_packet_from_event(ev);
-                if (!odp_packet_is_valid(pkt))
+                FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
+                if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
                         continue;
 
                 //Returns pointer to the start of the layer 2 header
-                l2h = (u_char *)odp_packet_l2_ptr(pkt, NULL);
+                FORMAT(libtrace)->l2h = (u_char *)odp_packet_l2_ptr(FORMAT(libtrace)->pkt, NULL);
 		//uint32_t odp_packet_len(odp_packet_t pkt);
-                pktlen = odp_packet_len(pkt);
+                numbytes = (int)odp_packet_len(FORMAT(libtrace)->pkt);
+		processed_pkts++;
 
-		processed_packets++;
-                odp_packet_free(pkt);
-                fprintf(stdout, "freeing packet #%d \n", processed_packets);
+		//if trace stopped
+		if (libtrace_halt)
+			return READ_EOF;
+		//XXX - move freeing packet to some other place and call it later
+                //fprintf(stdout, "freeing packet #%d \n", processed_pkts);
+	
+        	fprintf(stdout, "odp_read_pack() exits\n");
+		return numbytes;
 	}
 
-        fprintf(stdout, "odp_read_pack() exits\n");
+	/* We'll NEVER get here - but if we did it would be bad */
+	return READ_ERROR;
 }
 
 /* Reads the next packet from an input trace into the provided packet 
@@ -376,26 +386,46 @@ static int odp_read_pack()
  * reached.
  */
 
+//So endless loop while no packets and return bytes read in case there is a packet
 static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
-	int numbytes = 0;
-	uint32_t version = 0;
-	unsigned int duck_size;
+//	unsigned int duck_size;
 	uint32_t flags = 0;
+	int numbytes = 0;
 	
-	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) {
-                packet->buffer = malloc((size_t)LIBTRACE_PACKET_BUFSIZE);
-                if (!packet->buffer) {
-                        trace_set_err(libtrace, errno,
-                                        "Cannot allocate memory");
+	//1. Set packet fields
+	//XXX - check it later
+	packet->buf_control = TRACE_CTRL_EXTERNAL;
+	packet->type = TRACE_RT_DATA_ODP;
+
+//	flags |= TRACE_PREP_OWN_BUFFER;
+
+	//2. Read 1 packet from odp
+	numbytes = odp_read_pack();
+	if (numbytes == -1) 
+	{
+		trace_set_err(libtrace, errno, "Reading odp packet failed");
+		return -1;
+	}
+	else if (numbytes == 0) {
+		return 0;
+	}
+	else {
+		trace_set_err(libtrace, TRACE_ERR_BAD_PACKET, "Truncated odp packet");
+	}
+
+	//3. Get pointer from packet and assign it to packet->buffer
+	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) 
+	{
+		packet->buffer = FORMAT(libtrace)->pkt;	//XXX - we just copy pointer now - check it later
+		//packet->buffer = malloc((size_t)LIBTRACE_PACKET_BUFSIZE); //XXX - 65536 - do we need malloc here?
+                if (!packet->buffer) 
+		{
+                        trace_set_err(libtrace, errno, "Cannot allocate memory or have invalid pointer to packet");
                         return -1;
                 }
         }
 
-//	flags |= TRACE_PREP_OWN_BUFFER;
-
-
-	
 
 #if 0
 	if ((numbytes = wandio_read(libtrace->io, packet->buffer,
@@ -418,6 +448,16 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	
 	return numbytes;
 }
+
+static void odp_fin_packet(libtrace_packet_t *packet)
+{
+	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
+	{
+                odp_packet_free(pkt);
+		packet->buffer = NULL;
+	}
+}
+
 
 static int duck_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
@@ -519,7 +559,7 @@ static struct libtrace_format_t odp = {
         odp_fin_output,                /* fin_output */
         duck_read_packet,        	/* read_packet  - Reads the next packet from an input trace into the provided packet structure*/
         odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet. Used in read_packet*/
-	NULL,                           /* fin_packet */
+	odp_fin_packet,                 /* fin_packet */
         duck_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
         odp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */

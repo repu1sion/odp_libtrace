@@ -69,9 +69,43 @@ struct odp_format_data_out_t {
 //	int dag_version;	
 };
 
+// A structure describing the location of a PCI device (from rte_pci.h)
+struct rte_pci_addr {
+        uint16_t domain;                /**< Device domain */
+        uint8_t bus;                    /**< Device bus */
+        uint8_t devid;                  /**< Device ID */
+        uint8_t function;               /**< Device function. */
+};
+
+
+/**
+ * Parse the URI format as a pci address
+ * Fills in addr, note core is optional and is unchanged if
+ * a value for it is not provided.
+ *
+ * i.e. ./libtrace dpdk:0:1:0.0 -> 0:1:0.0
+ * or ./libtrace dpdk:0:1:0.1-2 -> 0:1:0.1 (Using CPU core #2)
+ */
+//example - odp:0000:03:00.0
+static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core) 
+{
+	int matches;
+	assert(str);
+	//str used as input. looking for 0000:03:00.0-0 in it and set addr and core
+	matches = sscanf(str, "%4"SCNx16":%2"SCNx8":%2"SCNx8".%2"SCNx8"-%ld",
+	                 &addr->domain, &addr->bus, &addr->devid,
+	                 &addr->function, core);
+	if (matches >= 4) {
+		return 0;
+	} else {
+		return -1;
+	}
+}
+
 static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
 	int ret; //returned error codes
+	struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
 	char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
 	int num_cpu; /* The number of CPUs in the system */
 	int my_cpu; /* The CPU number we want to bind to */
@@ -82,9 +116,13 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         odp_pktio_param_t pktio_param;
         odp_pktin_queue_param_t pktin_param;
 	char devname[] = "odp";
+	char dpdk_params[256] = {0};
 
 	//DPDK setup -----------------------------------------------------------
 	//we need to set command line for DPDK which we will pass through ODP
+
+
+	//XXX - not used yet
 	char* argv[] = {"libtrace",
 	                "-c", cpu_number,
 	                "-n", "1",
@@ -104,11 +142,34 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 		num_cpu = 1; /* fallback to the first core */
 	}
 
-	my_cpu = 0;	//XXX
+	//have 0 core selected by default
+	my_cpu = 0;
+
+	//forming params -------------------------------------------------------
+	printf("uridata: %s \n", uridata);
+	strcpy(dpdk_params, "-n 4 -w ");
+	strcat(dpdk_params, uridata);
+	printf("dpdk params passed: %s \n", dpdk_params);
+
+
+	/* This allows the user to specify the core - we would try to do this
+	 * automatically but it's hard to tell that this is secondary
+	 * before running rte_eal_init(...). Currently we are limited to 1
+	 * instance per core due to the way memory is allocated. */
+
+//don't need it now - we don't call dpdk white/black list functions, just pass param
+#if 0
+	if (parse_pciaddr(uridata, &use_addr, &my_cpu) != 0) {
+		fprintf(stderr, "Failed to parse URI\n");
+		return -1;
+	}
+#endif
 
 	//ODP setup ------------------------------------------------------------
 	/* Init ODP before calling anything else */
-        if (odp_init_global(NULL, NULL)) 
+	//@first param - odp params, @second param - dpdk params (passed through)
+	//const odp_platform_init_t *platform_params
+        if (odp_init_global(NULL, dpdk_params)) 
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);

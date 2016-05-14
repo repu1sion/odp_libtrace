@@ -115,7 +115,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         odp_pool_param_t params;
         odp_pktio_param_t pktio_param;
         odp_pktin_queue_param_t pktin_param;
-	char devname[] = "odp";
+	char devname[] = "0";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
 	char dpdk_params[256] = {0};
 
 	//DPDK setup -----------------------------------------------------------
@@ -211,6 +211,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
 
         /* Open a packet IO instance */
+	fprintf(stdout, "calling odp_pktio_open()\n");
         format_data->pktio = odp_pktio_open(devname, pool, &pktio_param);
         if (format_data->pktio == ODP_PKTIO_INVALID) {
                 fprintf(stderr, "  Error: pktio create failed %s\n", devname);
@@ -241,6 +242,8 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 static int odp_init_input(libtrace_t *libtrace) 
 {
 	char err[500] = {0};
+
+	printf("%s() \n", __func__);
 #if 0
 	dpdk_per_stream_t stream = DPDK_EMPTY_STREAM;
 #endif
@@ -268,6 +271,8 @@ static int odp_init_output(libtrace_out_t *libtrace)
 {
 	char err[500] = {0};
 
+	printf("%s() \n", __func__);
+
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
 #if 1
 	OUTPUT->file = 0;
@@ -290,6 +295,7 @@ static int odp_init_output(libtrace_out_t *libtrace)
 //XXX - doesn't set any option yet
 static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
+	printf("%s() \n", __func__);
 	switch (option) 
 	{
 		case TRACE_OPTION_OUTPUT_COMPRESS:
@@ -312,13 +318,19 @@ static int odp_start_input(libtrace_t *libtrace)
 {
 	int ret;
 
-	if (libtrace->io)
-		/* File already open */
-		return 0;
+	printf("%s() \n", __func__);
+
+#if 0
+	if (libtrace->io) // io - the libtrace IO reader for this trace (if applicable)
+		return 0; //file already open
 	
-	libtrace->io = trace_open_file(libtrace);
+	libtrace->io = trace_open_file(libtrace);//Open a file for reading using the new Libtrace IO system (wandio_create)
 	if (!libtrace->io)
+	{
+                fprintf(stderr, "Error: trace_open_file() failed\n");
 		return -1;
+	}
+#endif
 
 	//start pktio
         fprintf(stdout, "going to start pktio\n");
@@ -332,7 +344,10 @@ static int odp_start_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int odp_start_output(libtrace_out_t *libtrace) {
+static int odp_start_output(libtrace_out_t *libtrace) 
+{
+	printf("%s() \n", __func__);
+
 	OUTPUT->file = trace_open_file_out(libtrace, 
 						OUTPUT->compress_type,
 						OUTPUT->level,
@@ -345,6 +360,8 @@ static int odp_start_output(libtrace_out_t *libtrace) {
 
 static int odp_fin_input(libtrace_t *libtrace) 
 {
+	printf("%s() \n", __func__);
+
 	wandio_destroy(libtrace->io);
 
         odp_pktio_stop(FORMAT(libtrace)->pktio);
@@ -357,7 +374,10 @@ static int odp_fin_input(libtrace_t *libtrace)
 
 static int odp_fin_output(libtrace_out_t *libtrace) 
 {
+	printf("%s() \n", __func__);
+
 	wandio_wdestroy(OUTPUT->file);
+
 	//XXX - we have stopped pktio already in odp_fin_input(). 
 	//Probably there is a need to stop it also here, but probably not.
 
@@ -370,6 +390,8 @@ static int odp_fin_output(libtrace_out_t *libtrace)
 static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
+	printf("%s() \n", __func__);
+
 	//XXX - do we need it?
         if (packet->buffer != buffer &&
                         packet->buf_control == TRACE_CTRL_PACKET) {
@@ -453,6 +475,8 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	uint32_t flags = 0;
 	int numbytes = 0;
 	
+	printf("%s() \n", __func__);
+
 	//1. Set packet fields
 	//XXX - check it later
 	packet->buf_control = TRACE_CTRL_EXTERNAL;
@@ -511,6 +535,8 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 
 static void odp_fin_packet(libtrace_packet_t *packet)
 {
+	printf("%s() \n", __func__);
+
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
 		//XXX - need to free it somewhere, but we don't have a pointer to libtrace here
@@ -523,6 +549,7 @@ static void odp_fin_packet(libtrace_packet_t *packet)
 static int odp_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
+	printf("%s() \n", __func__);
 
 	int numbytes = 0;
 	
@@ -554,6 +581,8 @@ static int odp_write_packet(libtrace_out_t *libtrace,
 //Returns the payload length of the captured packet record
 static int odp_get_capture_length(const libtrace_packet_t *packet)
 {
+	printf("%s() \n", __func__);
+
 	//XXX - just a simple solution, could be not correct if we have an additional header
 	if (packet)
 		return trace_get_capture_length(packet);
@@ -566,6 +595,8 @@ static int odp_get_capture_length(const libtrace_packet_t *packet)
 
 static int odp_get_framing_length(const libtrace_packet_t *packet) 
 {
+	printf("%s() \n", __func__);
+
 	if (packet)
 		return trace_get_framing_length(packet);
 	else
@@ -578,6 +609,8 @@ static int odp_get_framing_length(const libtrace_packet_t *packet)
 //Returns the original length of the packet as it was on the wire
 static int odp_get_wire_length(const libtrace_packet_t *packet) 
 {
+	printf("%s() \n", __func__);
+
 	if (packet)
 		return trace_get_wire_length(packet);
 	else
@@ -589,6 +622,8 @@ static int odp_get_wire_length(const libtrace_packet_t *packet)
 
 static libtrace_linktype_t odp_get_link_type(const libtrace_packet_t *packet UNUSED) 
 {
+	printf("%s() \n", __func__);
+
 	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
 

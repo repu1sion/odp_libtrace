@@ -33,6 +33,7 @@ struct odp_format_data_t {
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
 	odp_packet_t pkt;	//ptr for current packet which we pass to prepare_packet()
+	int pkt_len;		//length of current packet
 	u_char *l2h;		//l2 header for current packet
 	/* Our parallel streams */
 	libtrace_list_t *per_stream;
@@ -384,35 +385,45 @@ static int odp_fin_output(libtrace_out_t *libtrace)
 	free(libtrace->format_data);
 	return 0;
 }
-
-//Converts a buffer containing a packet record into a libtrace packet
-//should be called in odp_read_packet()
+/*
+Converts a buffer containing a packet record into a libtrace packet
+should be called in odp_read_packet()
+Updates internal trace and packet details, such as payload pointers,
+loss counters and packet types to match the packet record provided
+in the buffer. This is a zero-copy function.
+*/
 static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
 	printf("%s() \n", __func__);
 
 	//XXX - do we need it?
-        if (packet->buffer != buffer &&
-                        packet->buf_control == TRACE_CTRL_PACKET) {
+	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
                 free(packet->buffer);
-        }
 
         if ((flags & TRACE_PREP_OWN_BUFFER) == TRACE_PREP_OWN_BUFFER) {
                 packet->buf_control = TRACE_CTRL_PACKET;
         } else
                 packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
-
-        packet->buffer = buffer;
+/*
+	void *header;			**< Pointer to the framing header *
+	void *payload;			**< Pointer to the link layer *
+	void *buffer;			**< Allocated buffer *
+*/
+        packet->buffer = buffer; //XXX - why do we need it, if they are already equal?
         packet->header = buffer;
-	packet->payload = FORMAT(libtrace)->l2h;
+	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
+	packet->capture_length = FORMAT(libtrace)->pkt_len;
+	packet->wire_length = FORMAT(libtrace)->pkt_len;
+	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
 	packet->type = rt_type;
 
-	//XXX - looks strange, maybe remove it later
+#if 0
 	if (libtrace->format_data == NULL) {
 		if (odp_init_input(libtrace))
 			return -1;
 	}
+#endif
 
 	return 0;
 }
@@ -429,15 +440,28 @@ static int odp_read_pack(libtrace_t *libtrace)
 	{
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
+        	fprintf(stdout, "odp_read_pack() - waiting for packet!\n");
                 ev = odp_schedule(NULL, ODP_SCHED_WAIT);
+        	fprintf(stdout, "odp_read_pack() - got event!\n");
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
+        	fprintf(stdout, "odp_read_pack() - got packet!\n");
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
+		{
+        		fprintf(stdout, "odp_read_pack() - packet is INVALID, skipping...\n");
                         continue;
+		}
+		else
+		{
+        		fprintf(stdout, "odp_read_pack() - packet is valid, print:\n");
+        		fprintf(stdout, "--------------------------------------------------\n");
+			odp_packet_print(FORMAT(libtrace)->pkt);
+        		fprintf(stdout, "--------------------------------------------------\n");
+		}
 
                 //Returns pointer to the start of the layer 2 header
                 FORMAT(libtrace)->l2h = (u_char *)odp_packet_l2_ptr(FORMAT(libtrace)->pkt, NULL);
-		//uint32_t odp_packet_len(odp_packet_t pkt);
-                numbytes = (int)odp_packet_len(FORMAT(libtrace)->pkt);
+                FORMAT(libtrace)->pkt_len = (int)odp_packet_len(FORMAT(libtrace)->pkt);
+                numbytes = FORMAT(libtrace)->pkt_len;
 		processed_pkts++;
 
 		//if trace stopped
@@ -446,7 +470,7 @@ static int odp_read_pack(libtrace_t *libtrace)
 		//XXX - move freeing packet to some other place and call it later
                 //fprintf(stdout, "freeing packet #%d \n", processed_pkts);
 	
-        	fprintf(stdout, "odp_read_pack() exits\n");
+        	fprintf(stdout, "odp_read_pack() exits. packet is %d bytes\n", numbytes);
 		return numbytes;
 	}
 
@@ -468,40 +492,44 @@ static int odp_read_pack(libtrace_t *libtrace)
  * reached.
  */
 
-//So endless loop while no packets and return bytes read in case there is a packet
+//So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
 static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
-//	unsigned int duck_size;
 	uint32_t flags = 0;
 	int numbytes = 0;
 	
 	printf("%s() \n", __func__);
 
-	//1. Set packet fields
-	//XXX - check it later
+	//#0. Free the last packet buffer
+	if (packet->buffer) 
+	{
+		//Check buffer memory is owned by the packet. It is if flag is TRACE_CTRL_PACKET
+		assert(packet->buf_control == TRACE_CTRL_PACKET); 
+		free(packet->buffer);
+		packet->buffer = NULL;
+	}
+
+	//#1. Set packet fields
+	//TRACE_CTRL_EXTERNAL means buffer memory is owned by an external source
 	packet->buf_control = TRACE_CTRL_EXTERNAL;
 	packet->type = TRACE_RT_DATA_ODP;
 
-//	flags |= TRACE_PREP_OWN_BUFFER;
-
-	//2. Read 1 packet from odp
+	//#2. Read 1 packet from odp. We wait here forever till packet appears.
 	numbytes = odp_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
 		trace_set_err(libtrace, errno, "Reading odp packet failed");
 		return -1;
 	}
-	else if (numbytes == 0) {
+	else if (numbytes == 0)
 		return 0;
-	}
-	else {
-		trace_set_err(libtrace, TRACE_ERR_BAD_PACKET, "Truncated odp packet");
-	}
 
-	//3. Get pointer from packet and assign it to packet->buffer
+	//#3. Get pointer from packet and assign it to packet->buffer
 	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		packet->buffer = FORMAT(libtrace)->pkt;	//XXX - we just copy pointer now - check it later
+		packet->buffer = FORMAT(libtrace)->pkt;
+		packet->capture_length = FORMAT(libtrace)->pkt_len;
+		printf("got pointer to packet: %p \n", packet->buffer);
 		//packet->buffer = malloc((size_t)LIBTRACE_PACKET_BUFSIZE); //XXX - 65536 - do we need malloc here?
                 if (!packet->buffer) 
 		{
@@ -509,23 +537,6 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
                         return -1;
                 }
         }
-
-
-#if 0
-	if ((numbytes = wandio_read(libtrace->io, packet->buffer,
-					(size_t)duck_size)) != (int)duck_size) {
-		if (numbytes == -1) {
-			trace_set_err(libtrace, errno, "Reading DUCK failed");
-			return -1;
-		}
-		else if (numbytes == 0) {
-			return 0;
-		}
-		else {
-			trace_set_err(libtrace, TRACE_ERR_BAD_PACKET, "Truncated DUCK packet");
-		}
-	}
-#endif
 
 	if (odp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
 		return -1;
@@ -579,15 +590,25 @@ static int odp_write_packet(libtrace_out_t *libtrace,
 }
 
 //Returns the payload length of the captured packet record
+//We use the value we got from odp and stored in FORMAT(libtrace)->pkt_len
 static int odp_get_capture_length(const libtrace_packet_t *packet)
 {
+	int pkt_len;
+
 	printf("%s() \n", __func__);
 
-	//XXX - just a simple solution, could be not correct if we have an additional header
 	if (packet)
-		return trace_get_capture_length(packet);
+	{
+		// this won't work probably, as we don't set packet->length anywhere, so can't return it.
+		//pkt_len = (int)trace_get_capture_length(packet);
+		//pkt_len = FORMAT(libtrace)->pkt_len;
+		pkt_len = packet->capture_length;
+		printf("packet: %p , length: %d\n", packet, pkt_len);
+		return pkt_len;
+	}
 	else
 	{
+		printf("NO packet. \n");
 		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
 		return -1;
 	}
@@ -598,7 +619,8 @@ static int odp_get_framing_length(const libtrace_packet_t *packet)
 	printf("%s() \n", __func__);
 
 	if (packet)
-		return trace_get_framing_length(packet);
+		//return trace_get_framing_length(packet);
+		return 0; //XXX - TODO, fix it, this is just for test
 	else
 	{
 		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
@@ -612,7 +634,8 @@ static int odp_get_wire_length(const libtrace_packet_t *packet)
 	printf("%s() \n", __func__);
 
 	if (packet)
-		return trace_get_wire_length(packet);
+		//return trace_get_wire_length(packet);
+		return packet->wire_length;
 	else
 	{
 		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");

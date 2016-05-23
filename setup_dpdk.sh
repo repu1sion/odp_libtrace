@@ -6,6 +6,7 @@ export RTE_TARGET=x86_64-native-linuxapp-gcc
 # loading dpdk kernel modules
 cd $RTE_SDK/$RTE_TARGET/kmod
 sudo modprobe uio
+sudo rmmod igb_uio.ko > /dev/null
 sudo insmod ./igb_uio.ko
 lsmod | grep -i uio
 

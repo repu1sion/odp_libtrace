@@ -105,11 +105,11 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
-	int ret; //returned error codes
-	struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
-	char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
+	//int ret; //returned error codes
+	//struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
+	//char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
 	int num_cpu; /* The number of CPUs in the system */
-	int my_cpu; /* The CPU number we want to bind to */
+	//int my_cpu; /* The CPU number we want to bind to */
 	//odp vars
 	odp_pool_t pool;
 	//odp_pktio_t pktio;
@@ -123,7 +123,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	//we need to set command line for DPDK which we will pass through ODP
 
 
-	//XXX - not used yet
+#if 0
 	char* argv[] = {"libtrace",
 	                "-c", cpu_number,
 	                "-n", "1",
@@ -132,6 +132,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	                "-m", "512", NULL};
 
 	int argc = sizeof(argv) / sizeof(argv[0]) - 1;
+#endif
 
 	/* Get the number of cpu cores in the system and use the last core
 	 * on the correct numa node */
@@ -144,7 +145,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	}
 
 	//have 0 core selected by default
-	my_cpu = 0;
+	//my_cpu = 0;
 
 	//forming params -------------------------------------------------------
 	printf("uridata: %s \n", uridata);
@@ -170,7 +171,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 	/* Init ODP before calling anything else */
 	//@first param - odp params, @second param - dpdk params (passed through)
 	//const odp_platform_init_t *platform_params
-        if (odp_init_global(NULL, dpdk_params)) 
+        if (odp_init_global(NULL, (odp_platform_init_t*)dpdk_params))
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);
@@ -340,7 +341,7 @@ static int odp_start_input(libtrace_t *libtrace)
                 fprintf(stderr, "Error: unable to start pktio\n");
 
         printf("  created pktio:%02i, queue mode\n default pktio%02i-INPUT queue\n",
-                (int)FORMAT(libtrace)->pktio, (int)FORMAT(libtrace)->pktio);
+                (int)(FORMAT(libtrace)->pktio), (int)(FORMAT(libtrace)->pktio));
 
 	return 0;
 }
@@ -397,7 +398,7 @@ static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 {
 	printf("%s() \n", __func__);
 
-	//XXX - do we need it?
+	//in theory we don't have packets allocated with TRACE_CTRL_PACKET
 	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
                 free(packet->buffer);
 
@@ -432,9 +433,6 @@ static int odp_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
 	odp_event_t ev;
-	unsigned int processed_pkts = 0;
-
-        fprintf(stdout, "odp_read_pack() start\n");
 
 	while (1) 
 	{
@@ -442,9 +440,7 @@ static int odp_read_pack(libtrace_t *libtrace)
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
         	fprintf(stdout, "odp_read_pack() - waiting for packet!\n");
                 ev = odp_schedule(NULL, ODP_SCHED_WAIT);
-        	fprintf(stdout, "odp_read_pack() - got event!\n");
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
-        	fprintf(stdout, "odp_read_pack() - got packet!\n");
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
 		{
         		fprintf(stdout, "odp_read_pack() - packet is INVALID, skipping...\n");
@@ -462,19 +458,17 @@ static int odp_read_pack(libtrace_t *libtrace)
                 FORMAT(libtrace)->l2h = (u_char *)odp_packet_l2_ptr(FORMAT(libtrace)->pkt, NULL);
                 FORMAT(libtrace)->pkt_len = (int)odp_packet_len(FORMAT(libtrace)->pkt);
                 numbytes = FORMAT(libtrace)->pkt_len;
-		processed_pkts++;
+		FORMAT(libtrace)->pkts_read++;
 
 		//if trace stopped
 		if (libtrace_halt)
 			return READ_EOF;
-		//XXX - move freeing packet to some other place and call it later
-                //fprintf(stdout, "freeing packet #%d \n", processed_pkts);
 	
-        	fprintf(stdout, "odp_read_pack() exits. packet is %d bytes\n", numbytes);
+		fprintf(stdout, "packet is %d bytes, total packets: %u\n", numbytes, FORMAT(libtrace)->pkts_read);
 		return numbytes;
 	}
 
-	/* We'll NEVER get here - but if we did it would be bad */
+	/* We'll NEVER get here */
 	return READ_ERROR;
 }
 
@@ -510,11 +504,11 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	}
 
 	//#1. Set packet fields
-	//TRACE_CTRL_EXTERNAL means buffer memory is owned by an external source
+	//TRACE_CTRL_EXTERNAL means buffer memory is owned by an external source, this is it, odp pool.
 	packet->buf_control = TRACE_CTRL_EXTERNAL;
 	packet->type = TRACE_RT_DATA_ODP;
 
-	//#2. Read 1 packet from odp. We wait here forever till packet appears.
+	//#2. Read a packet from odp. We wait here forever till packet appears.
 	numbytes = odp_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
@@ -529,8 +523,7 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	{
 		packet->buffer = FORMAT(libtrace)->pkt;
 		packet->capture_length = FORMAT(libtrace)->pkt_len;
-		printf("got pointer to packet: %p \n", packet->buffer);
-		//packet->buffer = malloc((size_t)LIBTRACE_PACKET_BUFSIZE); //XXX - 65536 - do we need malloc here?
+		printf("pointer to packet: %p \n", packet->buffer);
                 if (!packet->buffer) 
 		{
                         trace_set_err(libtrace, errno, "Cannot allocate memory or have invalid pointer to packet");
@@ -550,8 +543,7 @@ static void odp_fin_packet(libtrace_packet_t *packet)
 
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		//XXX - need to free it somewhere, but we don't have a pointer to libtrace here
-                //odp_packet_free(FORMAT(libtrace)->pkt);
+		odp_packet_free(packet->buffer);
 		packet->buffer = NULL;
 	}
 }
@@ -671,16 +663,16 @@ static struct libtrace_format_t odp = {
 	NULL,				/* probe magic - NOT NEEDED*/
         odp_init_input,	        	/* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
-        odp_start_input,	        /* start_input - Starts or unpauses an input trace (also opens file or device for reading)*/
+        odp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
         NULL,                           /* pause_input */
         odp_init_output,                /* init_output - Initialises an output trace using the capture format. */
-        odp_config_output,             /* config_output */
-        odp_start_output,              /* start_output */
+        odp_config_output,              /* config_output */
+        odp_start_output,               /* start_output */
         odp_fin_input,	               	/* fin_input - Stops capture input data.*/
-        odp_fin_output,                /* fin_output */
-        odp_read_packet,        	/* read_packet  - Reads the next packet from an input trace into the provided packet structure*/
-        odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet. Used in read_packet*/
-	odp_fin_packet,                 /* fin_packet */
+        odp_fin_output,                 /* fin_output */
+        odp_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
+        odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
+	odp_fin_packet,                 /* fin_packet - Frees any resources allocated for a libtrace packet */
         odp_write_packet,               /* write_packet - Write a libtrace packet to an output trace */
         odp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */

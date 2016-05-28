@@ -28,6 +28,10 @@
 #define DATAOUT(x) ((struct odp_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
+//----- OPTIONS -----
+//#define OPTION_PRINT_PACKETS
+
+
 struct odp_format_data_t {
 	int pvt;
 	unsigned int pkts_read;
@@ -364,10 +368,17 @@ static int odp_fin_input(libtrace_t *libtrace)
 {
 	printf("%s() \n", __func__);
 
-	wandio_destroy(libtrace->io);
-
         odp_pktio_stop(FORMAT(libtrace)->pktio);
         odp_pktio_close(FORMAT(libtrace)->pktio);
+	printf("pktio stopped and closed \n");
+
+	if (libtrace->io)
+	{
+		wandio_destroy(libtrace->io);
+		printf("wandio destroyed\n");
+	}
+	else
+		printf("there is no wandio to destroy\n");
 
 	free(libtrace->format_data);
 
@@ -448,10 +459,12 @@ static int odp_read_pack(libtrace_t *libtrace)
 		}
 		else
 		{
+#ifdef OPTION_PRINT_PACKETS
         		fprintf(stdout, "odp_read_pack() - packet is valid, print:\n");
         		fprintf(stdout, "--------------------------------------------------\n");
 			odp_packet_print(FORMAT(libtrace)->pkt);
         		fprintf(stdout, "--------------------------------------------------\n");
+#endif
 		}
 
                 //Returns pointer to the start of the layer 2 header

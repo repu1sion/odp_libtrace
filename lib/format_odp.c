@@ -92,6 +92,7 @@ struct rte_pci_addr {
  * or ./libtrace dpdk:0:1:0.1-2 -> 0:1:0.1 (Using CPU core #2)
  */
 //example - odp:0000:03:00.0
+#if 0
 static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core) 
 {
 	int matches;
@@ -106,6 +107,8 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 		return -1;
 	}
 }
+#endif
+
 
 static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
@@ -122,6 +125,10 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
         odp_pktin_queue_param_t pktin_param;
 	char devname[] = "0";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
 	char dpdk_params[256] = {0};
+	char *odp_error = "No error";
+
+	if (strlen(odp_error) < (size_t)errlen) 
+		strcpy(err, odp_error);
 
 	//DPDK setup -----------------------------------------------------------
 	//we need to set command line for DPDK which we will pass through ODP
@@ -279,6 +286,9 @@ static int odp_init_output(libtrace_out_t *libtrace)
 
 	printf("%s() \n", __func__);
 
+        fprintf(stderr, "Init output!()\n");
+	
+
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
 #if 1
 	OUTPUT->file = 0;
@@ -298,10 +308,14 @@ static int odp_init_output(libtrace_out_t *libtrace)
 	return 0;
 }
 
-//XXX - doesn't set any option yet
+//not used
 static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
 	printf("%s() \n", __func__);
+
+	if (!data)
+		return -1;
+
 	switch (option) 
 	{
 		case TRACE_OPTION_OUTPUT_COMPRESS:
@@ -344,8 +358,8 @@ static int odp_start_input(libtrace_t *libtrace)
         if (ret != 0)
                 fprintf(stderr, "Error: unable to start pktio\n");
 
-        printf("  created pktio:%02i, queue mode\n default pktio%02i-INPUT queue\n",
-                (int)(FORMAT(libtrace)->pktio), (int)(FORMAT(libtrace)->pktio));
+        printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
+                (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
 
 	return 0;
 }
@@ -583,14 +597,13 @@ static int odp_write_packet(libtrace_out_t *libtrace,
 		}
 		OUTPUT->dag_version = packet->type;
 	}
-	
-	if ((numbytes = wandio_wwrite(OUTPUT->file, packet->payload, 
-					trace_get_capture_length(packet))) !=
-				(int)trace_get_capture_length(packet)) {
-		trace_set_err_out(libtrace, errno, "Writing DUCK failed");
+#endif
+	if ((numbytes = wandio_wwrite(OUTPUT->file, packet->payload, trace_get_capture_length(packet))) !=
+				(int)trace_get_capture_length(packet)) 
+	{
+		trace_set_err_out(libtrace, errno, "Writing packet failed");
 		return -1;
 	}
-#endif
 	return numbytes;
 }
 
@@ -712,7 +725,8 @@ static struct libtrace_format_t odp = {
         NON_PARALLEL(false)
 };
 
-/* <== *** ==> */
-void odp_constructor(void) {
+void odp_constructor(void) 
+{
+	printf("registering odp struct with address: %p , odp_init_input: %p\n", &odp, odp.init_output);
 	register_format(&odp);
 }

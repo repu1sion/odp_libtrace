@@ -110,7 +110,7 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 #endif
 
 
-static int odp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
+static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
 	//int ret; //returned error codes
 	//struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
@@ -252,7 +252,7 @@ static int odp_init_environment(char *uridata, struct odp_format_data_t *format_
 
 /* Initialises an input trace using the capture format. 
    @param libtrace 	The input trace to be initialised */
-static int odp_init_input(libtrace_t *libtrace) 
+static int lodp_init_input(libtrace_t *libtrace) 
 {
 	char err[500] = {0};
 
@@ -269,7 +269,7 @@ static int odp_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
 #endif
-	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
+	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
 		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
 		free(libtrace->format_data);
@@ -280,7 +280,7 @@ static int odp_init_input(libtrace_t *libtrace)
 }
 
 //Initialises an output trace using the capture format.
-static int odp_init_output(libtrace_out_t *libtrace) 
+static int lodp_init_output(libtrace_out_t *libtrace) 
 {
 	char err[500] = {0};
 
@@ -298,7 +298,7 @@ static int odp_init_output(libtrace_out_t *libtrace)
 #endif
 
 	//this is same we do in odp_init_input(), but with odp_format_data_out_t struct
-	if (odp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
+	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
 		trace_set_err_out(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
 		free(libtrace->format_data);
 		libtrace->format_data = NULL;
@@ -309,7 +309,7 @@ static int odp_init_output(libtrace_out_t *libtrace)
 }
 
 //not used
-static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
+static int lodp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
 	printf("%s() \n", __func__);
 
@@ -334,7 +334,7 @@ static int odp_config_output(libtrace_out_t *libtrace, trace_option_output_t opt
 	assert(0);
 }
 
-static int odp_start_input(libtrace_t *libtrace) 
+static int lodp_start_input(libtrace_t *libtrace) 
 {
 	int ret;
 
@@ -364,7 +364,7 @@ static int odp_start_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int odp_start_output(libtrace_out_t *libtrace) 
+static int lodp_start_output(libtrace_out_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
@@ -378,7 +378,7 @@ static int odp_start_output(libtrace_out_t *libtrace)
 	return 0;
 }
 
-static int odp_fin_input(libtrace_t *libtrace) 
+static int lodp_fin_input(libtrace_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
@@ -399,7 +399,7 @@ static int odp_fin_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int odp_fin_output(libtrace_out_t *libtrace) 
+static int lodp_fin_output(libtrace_out_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
@@ -418,7 +418,7 @@ Updates internal trace and packet details, such as payload pointers,
 loss counters and packet types to match the packet record provided
 in the buffer. This is a zero-copy function.
 */
-static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
+static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
 	printf("%s() \n", __func__);
@@ -454,7 +454,7 @@ static int odp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 	return 0;
 }
 
-static int odp_read_pack(libtrace_t *libtrace)
+static int lodp_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
 	odp_event_t ev;
@@ -463,18 +463,18 @@ static int odp_read_pack(libtrace_t *libtrace)
 	{
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
-        	fprintf(stdout, "odp_read_pack() - waiting for packet!\n");
+        	fprintf(stdout, "%s() - waiting for packet!\n", __func__);
                 ev = odp_schedule(NULL, ODP_SCHED_WAIT);
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
 		{
-        		fprintf(stdout, "odp_read_pack() - packet is INVALID, skipping...\n");
+        		fprintf(stdout, "%s() - packet is INVALID, skipping...\n", __func__);
                         continue;
 		}
 		else
 		{
 #ifdef OPTION_PRINT_PACKETS
-        		fprintf(stdout, "odp_read_pack() - packet is valid, print:\n");
+        		fprintf(stdout, "%s() - packet is valid, print:\n", __func__);
         		fprintf(stdout, "--------------------------------------------------\n");
 			odp_packet_print(FORMAT(libtrace)->pkt);
         		fprintf(stdout, "--------------------------------------------------\n");
@@ -514,7 +514,7 @@ static int odp_read_pack(libtrace_t *libtrace)
  */
 
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
-static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
+static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
 	uint32_t flags = 0;
 	int numbytes = 0;
@@ -536,7 +536,7 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	packet->type = TRACE_RT_DATA_ODP;
 
 	//#2. Read a packet from odp. We wait here forever till packet appears.
-	numbytes = odp_read_pack(libtrace);
+	numbytes = lodp_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
 		trace_set_err(libtrace, errno, "Reading odp packet failed");
@@ -558,13 +558,13 @@ static int odp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
                 }
         }
 
-	if (odp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
+	if (lodp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
 		return -1;
 	
 	return numbytes;
 }
 
-static void odp_fin_packet(libtrace_packet_t *packet)
+static void lodp_fin_packet(libtrace_packet_t *packet)
 {
 	printf("%s() \n", __func__);
 
@@ -576,7 +576,7 @@ static void odp_fin_packet(libtrace_packet_t *packet)
 }
 
 
-static int odp_write_packet(libtrace_out_t *libtrace, 
+static int lodp_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
 	printf("%s() \n", __func__);
@@ -609,7 +609,7 @@ static int odp_write_packet(libtrace_out_t *libtrace,
 
 //Returns the payload length of the captured packet record
 //We use the value we got from odp and stored in FORMAT(libtrace)->pkt_len
-static int odp_get_capture_length(const libtrace_packet_t *packet)
+static int lodp_get_capture_length(const libtrace_packet_t *packet)
 {
 	int pkt_len;
 
@@ -632,7 +632,7 @@ static int odp_get_capture_length(const libtrace_packet_t *packet)
 	}
 }
 
-static int odp_get_framing_length(const libtrace_packet_t *packet) 
+static int lodp_get_framing_length(const libtrace_packet_t *packet) 
 {
 	printf("%s() \n", __func__);
 
@@ -647,7 +647,7 @@ static int odp_get_framing_length(const libtrace_packet_t *packet)
 }
 
 //Returns the original length of the packet as it was on the wire
-static int odp_get_wire_length(const libtrace_packet_t *packet) 
+static int lodp_get_wire_length(const libtrace_packet_t *packet) 
 {
 	printf("%s() \n", __func__);
 
@@ -661,7 +661,7 @@ static int odp_get_wire_length(const libtrace_packet_t *packet)
 	}
 }
 
-static libtrace_linktype_t odp_get_link_type(const libtrace_packet_t *packet UNUSED) 
+static libtrace_linktype_t lodp_get_link_type(const libtrace_packet_t *packet UNUSED) 
 {
 	printf("%s() \n", __func__);
 
@@ -669,7 +669,7 @@ static libtrace_linktype_t odp_get_link_type(const libtrace_packet_t *packet UNU
 }
 
 /* <== *** ==> */
-static void odp_help(void) {
+static void lodp_help(void) {
 	printf("Endace ODP format module\n");
 	printf("Supported input uris:\n");
 	printf("\todp:/path/to/input/file\n");
@@ -681,26 +681,26 @@ static void odp_help(void) {
 
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
-static struct libtrace_format_t odp = {
+static struct libtrace_format_t lodp = {
         "odp",				/* name used in URI to identify capture format - odp:iface */
         "$Id$",				/* version of this module */
         TRACE_FORMAT_ODP,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
-        odp_init_input,	        	/* init_input - Initialises an input trace using the capture format */
+        lodp_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
-        odp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
+        lodp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
         NULL,                           /* pause_input */
-        odp_init_output,                /* init_output - Initialises an output trace using the capture format. */
-        odp_config_output,              /* config_output */
-        odp_start_output,               /* start_output */
-        odp_fin_input,	               	/* fin_input - Stops capture input data.*/
-        odp_fin_output,                 /* fin_output */
-        odp_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
-        odp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
-	odp_fin_packet,                 /* fin_packet - Frees any resources allocated for a libtrace packet */
-        odp_write_packet,               /* write_packet - Write a libtrace packet to an output trace */
-        odp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
+        lodp_init_output,               /* init_output - Initialises an output trace using the capture format. */
+        lodp_config_output,             /* config_output */
+        lodp_start_output,              /* start_output */
+        lodp_fin_input,	               	/* fin_input - Stops capture input data.*/
+        lodp_fin_output,                /* fin_output */
+        lodp_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
+        lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
+	lodp_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
+        lodp_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+        lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
         NULL,          			/* get_erf_timestamp */
@@ -710,9 +710,9 @@ static struct libtrace_format_t odp = {
         NULL,                   	/* seek_erf */
         NULL,                           /* seek_timeval */
         NULL,                           /* seek_seconds */
-        odp_get_capture_length,  	/* get_capture_length */
-        odp_get_wire_length,  		/* get_wire_length */
-        odp_get_framing_length, 	/* get_framing_length */
+        lodp_get_capture_length,  	/* get_capture_length */
+        lodp_get_wire_length,  		/* get_wire_length */
+        lodp_get_framing_length, 	/* get_framing_length */
         NULL,         			/* set_capture_length */
 	NULL,				/* get_received_packets */
 	NULL,				/* get_filtered_packets */
@@ -720,13 +720,13 @@ static struct libtrace_format_t odp = {
 	NULL,				/* get_statistics */
         NULL,                           /* get_fd */
         NULL,              		/* trace_event */
-        odp_help,                     	/* help */
+        lodp_help,                     	/* help */
         NULL,                            /* next pointer */
         NON_PARALLEL(false)
 };
 
 void odp_constructor(void) 
 {
-	printf("registering odp struct with address: %p , odp_init_input: %p\n", &odp, odp.init_output);
-	register_format(&odp);
+	printf("registering odp struct with address: %p , odp_init_output: %p\n", &lodp, lodp.init_output);
+	register_format(&lodp);
 }

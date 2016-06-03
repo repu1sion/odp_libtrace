@@ -79,7 +79,12 @@ static void cleanup_signal(int sig)
  *  0 = stop reading packets, cos we're done
  *  -1 = stop reading packets, we've got an error
  */
-static int per_packet(libtrace_packet_t *packet) {
+static int per_packet(libtrace_packet_t *packet) 
+{
+	double seconds;
+
+	printf("TRACESPLIT: per_packet() called. \n");
+
 
 	if (trace_get_link_type(packet) == -1) {
 		fprintf(stderr, "Halted due to being unable to determine linktype - input trace may be corrupt.\n");
@@ -90,7 +95,11 @@ static int per_packet(libtrace_packet_t *packet) {
 		trace_set_capture_length(packet,snaplen);
 	}
 
-	if (trace_get_seconds(packet)<starttime) {
+	seconds = trace_get_seconds(packet);
+	printf("TRACESPLIT: seconds: %f , starttime: %lu \n", seconds, starttime);
+	if (trace_get_seconds(packet) < starttime) 
+	{
+		printf("TRACESPLIT: seconds < starttime. return and continue read packets\n");
 		return 1;
 	}
 
@@ -108,6 +117,7 @@ static int per_packet(libtrace_packet_t *packet) {
 		}
 	}
 
+	//here we close the file
 	if (output && trace_get_seconds(packet)>firsttime+interval) {
 		trace_destroy_output(output);
 		output=NULL;

@@ -668,8 +668,24 @@ static libtrace_linktype_t lodp_get_link_type(const libtrace_packet_t *packet UN
 	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
 
+//XXX - return timestamp from a packet or time now (as hack)
+static double lodp_get_seconds(const libtrace_packet_t *packet)
+{
+	double seconds = 0.0f;
+	time_t t;
+	time(&t);
+
+	//XXX - hack for test
+	seconds = (double)t;
+	printf("packet framing header is : %p, time : %f",
+		packet->header, seconds);
+
+	return seconds;
+}
+
 /* <== *** ==> */
-static void lodp_help(void) {
+static void lodp_help(void)
+{
 	printf("Endace ODP format module\n");
 	printf("Supported input uris:\n");
 	printf("\todp:/path/to/input/file\n");
@@ -706,7 +722,7 @@ static struct libtrace_format_t lodp = {
         NULL,          			/* get_erf_timestamp */
         NULL,                           /* get_timeval */
 	NULL,				/* get_timespec */
-        NULL,                           /* get_seconds */
+        lodp_get_seconds,               /* get_seconds */
         NULL,                   	/* seek_erf */
         NULL,                           /* seek_timeval */
         NULL,                           /* seek_seconds */

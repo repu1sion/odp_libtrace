@@ -1263,7 +1263,7 @@ void bpf_constructor(void);
 void dpdk_constructor(void);
 #endif
 //ODP support
-/** Constructor for the DUCK format module */
+/** Constructor for the ODP format module */
 void odp_constructor(void);
 
 

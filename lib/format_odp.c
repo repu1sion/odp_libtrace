@@ -29,7 +29,14 @@
 #define OUTPUT DATAOUT(libtrace)
 
 //----- OPTIONS -----
+//#define DEBUG
 //#define OPTION_PRINT_PACKETS
+
+#ifdef DEBUG
+ #define debug(x...) printf(x)
+#else
+ #define debug(x...)
+#endif
 
 
 struct odp_format_data_t {
@@ -421,7 +428,7 @@ in the buffer. This is a zero-copy function.
 static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	//in theory we don't have packets allocated with TRACE_CTRL_PACKET
 	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
@@ -463,7 +470,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
 	{
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
-        	fprintf(stdout, "%s() - waiting for packet!\n", __func__);
+        	debug("%s() - waiting for packet!\n", __func__);
                 ev = odp_schedule(NULL, ODP_SCHED_WAIT);
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
@@ -491,7 +498,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
 		if (libtrace_halt)
 			return READ_EOF;
 	
-		fprintf(stdout, "packet is %d bytes, total packets: %u\n", numbytes, FORMAT(libtrace)->pkts_read);
+		debug("packet is %d bytes, total packets: %u\n", numbytes, FORMAT(libtrace)->pkts_read);
 		return numbytes;
 	}
 
@@ -519,7 +526,7 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	uint32_t flags = 0;
 	int numbytes = 0;
 	
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	//#0. Free the last packet buffer
 	if (packet->buffer) 
@@ -550,7 +557,7 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	{
 		packet->buffer = FORMAT(libtrace)->pkt;
 		packet->capture_length = FORMAT(libtrace)->pkt_len;
-		printf("pointer to packet: %p \n", packet->buffer);
+		debug("pointer to packet: %p \n", packet->buffer);
                 if (!packet->buffer) 
 		{
                         trace_set_err(libtrace, errno, "Cannot allocate memory or have invalid pointer to packet");
@@ -566,7 +573,7 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 
 static void lodp_fin_packet(libtrace_packet_t *packet)
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
@@ -579,7 +586,7 @@ static void lodp_fin_packet(libtrace_packet_t *packet)
 static int lodp_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	int numbytes = 0;
 	
@@ -613,7 +620,7 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 {
 	int pkt_len;
 
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	if (packet)
 	{
@@ -621,12 +628,12 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 		//pkt_len = (int)trace_get_capture_length(packet);
 		//pkt_len = FORMAT(libtrace)->pkt_len;
 		pkt_len = packet->capture_length;
-		printf("packet: %p , length: %d\n", packet, pkt_len);
+		debug("packet: %p , length: %d\n", packet, pkt_len);
 		return pkt_len;
 	}
 	else
 	{
-		printf("NO packet. \n");
+		debug("NO packet. \n");
 		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
 		return -1;
 	}
@@ -634,7 +641,7 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 
 static int lodp_get_framing_length(const libtrace_packet_t *packet) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	if (packet)
 		//return trace_get_framing_length(packet);
@@ -649,7 +656,7 @@ static int lodp_get_framing_length(const libtrace_packet_t *packet)
 //Returns the original length of the packet as it was on the wire
 static int lodp_get_wire_length(const libtrace_packet_t *packet) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	if (packet)
 		//return trace_get_wire_length(packet);
@@ -663,7 +670,7 @@ static int lodp_get_wire_length(const libtrace_packet_t *packet)
 
 static libtrace_linktype_t lodp_get_link_type(const libtrace_packet_t *packet UNUSED) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
@@ -677,7 +684,7 @@ static double lodp_get_seconds(const libtrace_packet_t *packet)
 
 	//XXX - hack for test
 	seconds = (double)t;
-	printf("packet framing header is : %p, time : %.0f \n",
+	debug("packet framing header is : %p, time : %.0f \n",
 		packet->header, seconds);
 
 	return seconds;

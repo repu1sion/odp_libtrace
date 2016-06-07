@@ -10,6 +10,15 @@
 #include <signal.h>
 #include <time.h>
 
+//----- OPTIONS -----
+//#define DEBUG
+
+#ifdef DEBUG
+ #define debug(x...) printf(x)
+#else
+ #define debug(x...)
+#endif
+
 /* Global variables */
 struct libtrace_out_t *output = NULL;
 uint64_t count=UINT64_MAX;
@@ -83,8 +92,7 @@ static int per_packet(libtrace_packet_t *packet)
 {
 	double seconds;
 
-	printf("TRACESPLIT: per_packet() called. \n");
-
+	debug("TRACESPLIT: per_packet() called. \n");
 
 	if (trace_get_link_type(packet) == -1) {
 		fprintf(stderr, "Halted due to being unable to determine linktype - input trace may be corrupt.\n");
@@ -96,10 +104,10 @@ static int per_packet(libtrace_packet_t *packet)
 	}
 
 	seconds = trace_get_seconds(packet);
-	printf("TRACESPLIT: seconds: %f , starttime: %lu \n", seconds, starttime);
+	debug("TRACESPLIT: seconds: %f , starttime: %lu \n", seconds, starttime);
 	if (trace_get_seconds(packet) < starttime) 
 	{
-		printf("TRACESPLIT: seconds < starttime. return and continue read packets\n");
+		debug("TRACESPLIT: seconds < starttime. return and continue read packets\n");
 		return 1;
 	}
 

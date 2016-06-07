@@ -677,7 +677,7 @@ static double lodp_get_seconds(const libtrace_packet_t *packet)
 
 	//XXX - hack for test
 	seconds = (double)t;
-	printf("packet framing header is : %p, time : %f",
+	printf("packet framing header is : %p, time : %.0f \n",
 		packet->header, seconds);
 
 	return seconds;

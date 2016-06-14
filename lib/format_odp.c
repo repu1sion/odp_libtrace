@@ -40,6 +40,7 @@
 
 
 struct odp_format_data_t {
+	odp_instance_t odp_instance;
 	int pvt;
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
@@ -189,14 +190,14 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 	/* Init ODP before calling anything else */
 	//@first param - odp params, @second param - dpdk params (passed through)
 	//const odp_platform_init_t *platform_params
-        if (odp_init_global(NULL, (odp_platform_init_t*)dpdk_params))
+        if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);
         }
 
         /* Create thread structure for ODP */		//XXX - maybe ODP_THREAD_CONTROL ?
-        if (odp_init_local(ODP_THREAD_WORKER)) 
+        if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
 	{
                 fprintf(stderr, "Error: ODP local init failed.\n");
                 exit(EXIT_FAILURE);

@@ -38,40 +38,17 @@
  #define debug(x...)
 #endif
 
-
 struct odp_format_data_t {
 	odp_instance_t odp_instance;
-	int pvt;
+	int pvt;			//for private data saving
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
-	odp_packet_t pkt;	//ptr for current packet which we pass to prepare_packet()
-	int pkt_len;		//length of current packet
-	u_char *l2h;		//l2 header for current packet
+	odp_packet_t pkt;		//ptr for current packet which we pass to prepare_packet()
+	int pkt_len;			//length of current packet
+	u_char *l2h;			//l2 header for current packet
 	/* Our parallel streams */
 	libtrace_list_t *per_stream;
 };
-
-//----- DPDK stream part. Maybe we don't need it -------------------------------
-#if 0
-struct dpdk_per_stream_t
-{
-	uint16_t queue_id;
-	uint64_t ts_last_sys; /* System timestamp of our most recent packet in nanoseconds */
-	struct rte_mempool *mempool;
-	int lcore;
-}
-
-#define DPDK_EMPTY_STREAM {-1, 0, NULL, -1}
-
-typedef struct dpdk_per_stream_t dpdk_per_stream_t;
-#endif
-
-#if 0
-struct duck_format_data_t {
-	char *path;
-	int dag_version;
-};
-#endif
 
 struct odp_format_data_out_t {
 	char *path;
@@ -79,7 +56,6 @@ struct odp_format_data_out_t {
 	int compress_type;
 	int fileflag;
 	iow_t *file;
-//	int dag_version;	
 };
 
 // A structure describing the location of a PCI device (from rte_pci.h)
@@ -89,7 +65,6 @@ struct rte_pci_addr {
         uint8_t devid;                  /**< Device ID */
         uint8_t function;               /**< Device function. */
 };
-
 
 /**
  * Parse the URI format as a pci address
@@ -116,7 +91,6 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 	}
 }
 #endif
-
 
 static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
@@ -676,14 +650,19 @@ static libtrace_linktype_t lodp_get_link_type(const libtrace_packet_t *packet UN
 	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
 }
 
-//XXX - return timestamp from a packet or time now (as hack)
+//returns timestamp from a packet or time now (as hack)
 static double lodp_get_seconds(const libtrace_packet_t *packet)
 {
 	double seconds = 0.0f;
 	time_t t;
+	const void *p;
+
+	//avoid warning about unused packet var
+	p = packet;
+	(void)p;
+
 	time(&t);
 
-	//XXX - hack for test
 	seconds = (double)t;
 	debug("packet framing header is : %p, time : %.0f \n",
 		packet->header, seconds);

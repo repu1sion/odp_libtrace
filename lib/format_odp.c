@@ -670,6 +670,24 @@ static double lodp_get_seconds(const libtrace_packet_t *packet)
 	return seconds;
 }
 
+static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
+{
+	struct timeval tv;
+	const void *p;
+
+	//avoid warning about unused packet var
+	p = packet;
+	(void)p;
+
+	gettimeofday(&tv, NULL);
+
+	debug("packet header: %p, seconds: %zu , microseconds: %zu \n",
+		packet->header, tv.tv_sec, tv.tv_usec);
+
+	return tv;
+}
+
+
 /* <== *** ==> */
 static void lodp_help(void)
 {
@@ -707,7 +725,7 @@ static struct libtrace_format_t lodp = {
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
         NULL,          			/* get_erf_timestamp */
-        NULL,                           /* get_timeval */
+        lodp_get_timeval,               /* get_timeval */
 	NULL,				/* get_timespec */
         lodp_get_seconds,               /* get_seconds */
         NULL,                   	/* seek_erf */

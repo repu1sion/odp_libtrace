@@ -400,6 +400,9 @@ Updates internal trace and packet details, such as payload pointers,
 loss counters and packet types to match the packet record provided
 in the buffer. This is a zero-copy function.
 */
+
+#define WIRELEN_DROPLEN 4
+
 static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
@@ -418,11 +421,11 @@ static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
 	void *payload;			**< Pointer to the link layer *
 	void *buffer;			**< Allocated buffer *
 */
-        packet->buffer = buffer; //XXX - why do we need it, if they are already equal?
+        packet->buffer = buffer;
         packet->header = buffer;
 	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
 	packet->capture_length = FORMAT(libtrace)->pkt_len;
-	packet->wire_length = FORMAT(libtrace)->pkt_len;
+	packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
 	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
 	packet->type = rt_type;
 
@@ -595,7 +598,7 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 {
 	int pkt_len;
 
-	debug("%s() \n", __func__);
+	debug("lodp_get_capture_length() called! \n");
 
 	if (packet)
 	{
@@ -616,7 +619,7 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 
 static int lodp_get_framing_length(const libtrace_packet_t *packet) 
 {
-	debug("%s() \n", __func__);
+	debug("lodp_get_framing_length() called! \n");
 
 	if (packet)
 		//return trace_get_framing_length(packet);
@@ -631,7 +634,7 @@ static int lodp_get_framing_length(const libtrace_packet_t *packet)
 //Returns the original length of the packet as it was on the wire
 static int lodp_get_wire_length(const libtrace_packet_t *packet) 
 {
-	debug("%s() \n", __func__);
+	debug("lodp_get_wire_length() called! \n");
 
 	if (packet)
 		//return trace_get_wire_length(packet);
@@ -687,8 +690,6 @@ static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
 	return tv;
 }
 
-
-/* <== *** ==> */
 static void lodp_help(void)
 {
 	printf("Endace ODP format module\n");

@@ -173,7 +173,9 @@ static libtrace_packet_t *perform_jump(libtrace_packet_t *packet, int jump)
 
 static int per_packet(libtrace_packet_t **packet) {
 
+#ifdef DEBUG
 	double seconds;
+#endif
 
 	debug("TRACESPLIT: per_packet() called. \n");
 
@@ -186,7 +188,9 @@ static int per_packet(libtrace_packet_t **packet) {
 		trace_set_capture_length(*packet,snaplen);
 	}
 
+#ifdef DEBUG
 	seconds = trace_get_seconds(*packet);
+#endif
 	debug("TRACESPLIT: seconds: %f , starttime: %lu \n", seconds, starttime);
 	if (trace_get_seconds(*packet) < starttime) 
 	{

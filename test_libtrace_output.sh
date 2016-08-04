@@ -1,7 +1,7 @@
 #!/bin/bash
 
 TIMESTART=$(date +%s)
-TIMEEND=$(($TIMESTART+10))
+TIMEEND=$(($TIMESTART+30))
 
 echo "time to start: $TIMESTART, time to end: $TIMEEND"
 

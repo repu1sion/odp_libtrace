@@ -1,30 +1,61 @@
 #!/bin/bash
 
+# headers needed:
+# -----
+#1. odp-dpdk/include
+#2. odp-dpdk/platform/linux-dpdk
+#3. odp-dpdk/platform/linux-dpdk/arch/x86
+
+
+#export RTE_SDK=/mnt/raw/gdwk/dpdk/dpdk/
+#export RTE_TARGET=x86_64-native-linuxapp-gcc
+#export LDFLAGS='-L/usr/local/lib/'
+
 # colors
 WHITE='\033[1;37m'
+RED='\033[0;31m'
 NC='\033[0m' # No Color
 
+HEADER1="include"
+HEADER2="platform/linux-dpdk"
+HEADER2="platform/linux-dpdk/arch/x86"
 
-export RTE_SDK=/mnt/raw/gdwk/dpdk/dpdk/
-export RTE_TARGET=x86_64-native-linuxapp-gcc
-export LDFLAGS='-L/usr/local/lib/'
-
+ODP_DPDK_PATH=""
+SEARCH_PATH="/"
 NUMCORES=$(nproc)
-echo -e "${WHITE}number of cores detected: $NUMCORES ${NC}"
 
+# parsing args
+if [ $# -eq 1 ]; then
+	SEARCH_PATH=$1
+fi
+
+# search for odp-dpdk
+echo -e "${WHITE}searching for odp-dpdk in $SEARCH_PATH ${NC}"
+ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp-dpdk' | awk '{if (NR==1) print $1}'`
+if [ ! -z $ODP_DPDK_PATH ]; then
+	echo -e "${WHITE}odp-dpdk found successfully. path is : $ODP_DPDK_PATH ${NC}"
+else
+	echo -e "${RED}odp-dpdk was not found. please try to pass its path as an argument to that script ${NC}"
+	exit 1
+fi
+
+# configuring
 ./bootstrap.sh
 
-if [ $NUMCORES -le 2 ]; then
-	echo -e "${WHITE}configuring for laptop ${NC}"
-	./configure CFLAGS="-shared-libgcc -I/archive/repos/odp-dpdk/include -I/archive/repos/odp-dpdk/platform/linux-dpdk/include -I/archive/repos/odp-dpdk/platform/linux-dpdk/arch/x86"
-else
-	echo -e "${WHITE}configuring for big pc ${NC}"
-	./configure CFLAGS="-shared-libgcc -I/mnt/raw/gdwk/odp/odp-dpdk/include -I/mnt/raw/gdwk/odp/odp-dpdk/platform/linux-dpdk/include -I/mnt/raw/gdwk/odp/odp-dpdk/platform/linux-dpdk/arch/x86"
-fi
+./configure CFLAGS="-shared-libgcc -I${ODP_DPDK_PATH}/${HEADER1} -I${ODP_DPDK_PATH}/${HEADER2} -I${ODP_DPDK_PATH}/${HEADER3}"
+
+#if [ $NUMCORES -le 2 ]; then
+#	echo -e "${WHITE}configuring for laptop ${NC}"
+#	./configure CFLAGS="-shared-libgcc -I/archive/repos/odp-dpdk/include -I/archive/repos/odp-dpdk/platform/linux-dpdk/include -I/archive/repos/odp-dpdk/platform/linux-dpdk/arch/x86"
+#else
+#	echo -e "${WHITE}configuring for big pc ${NC}"
+#	./configure CFLAGS="-shared-libgcc -I/mnt/raw/gdwk/odp/odp-dpdk/include -I/mnt/raw/gdwk/odp/odp-dpdk/platform/linux-dpdk/include -I/mnt/raw/gdwk/odp/odp-dpdk/platform/linux-dpdk/arch/x86"
+#fi
 
 #./configure --with-dpdk CFLAGS="-shared-libgcc"
 
-
-make
+# building
+echo -e "${WHITE}number of cores detected: $NUMCORES ${NC}"
+make -j${NUMCORES}
 sudo make install
 sudo ldconfig

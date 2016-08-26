@@ -448,12 +448,20 @@ static int lodp_read_pack(libtrace_t *libtrace)
 	{
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
-        	debug("%s() - waiting for packet!\n", __func__);
-                ev = odp_schedule(NULL, ODP_SCHED_WAIT);
+		debug("%s() - waiting for packet!\n", __func__);
+                ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
+
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
 		{
-        		fprintf(stdout, "%s() - packet is INVALID, skipping...\n", __func__);
+        		debug("%s() - packet is INVALID, skipping...\n", __func__);
                         continue;
 		}
 		else
@@ -472,9 +480,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
                 numbytes = FORMAT(libtrace)->pkt_len;
 		FORMAT(libtrace)->pkts_read++;
 
-		//if trace stopped
-		if (libtrace_halt)
-			return READ_EOF;
+
 	
 		debug("packet is %d bytes, total packets: %u\n", numbytes, FORMAT(libtrace)->pkts_read);
 		return numbytes;

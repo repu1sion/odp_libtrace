@@ -11,6 +11,7 @@
 #include <time.h>
 
 //----- OPTIONS -----
+#define SIGNALS_SLOWHALT
 //#define DEBUG
 
 #ifdef DEBUG
@@ -454,17 +455,22 @@ int main(int argc, char *argv[])
 
 	output_base = argv[argc - 1];
 
+//repu1sion
+
+#ifdef SIGNALS_SLOWHALT
 	sigact.sa_handler = cleanup_signal;
 	sigemptyset(&sigact.sa_mask);
 	sigact.sa_flags = SA_RESTART;
 
 	sigaction(SIGINT, &sigact, NULL);
 	sigaction(SIGTERM, &sigact, NULL);
-
+#endif
 	output=NULL;
 
+#ifdef SIGNALS_SLOWHALT
 	signal(SIGINT,&cleanup_signal);
 	signal(SIGTERM,&cleanup_signal);
+#endif
 
 	for (i = optind; i < argc - 1; i++) {
 

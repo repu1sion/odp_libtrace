@@ -58,6 +58,14 @@ struct odp_format_data_out_t {
 	iow_t *file;
 };
 
+typedef struct odp_per_stream_s {
+	int id;
+	int core;
+} odp_per_stream_t;
+
+
+
+
 // A structure describing the location of a PCI device (from rte_pci.h)
 struct rte_pci_addr {
         uint16_t domain;                /**< Device domain */
@@ -239,18 +247,18 @@ static int lodp_init_input(libtrace_t *libtrace)
 	char err[500] = {0};
 
 	printf("%s() \n", __func__);
-#if 0
-	dpdk_per_stream_t stream = DPDK_EMPTY_STREAM;
-#endif
+
+	odp_per_stream_t stream;
+	memset(&stream, 0x0, sizeof(odp_per_stream_t));
+
 	//init all the data in odp_format_data_t
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
-#if 0
-	/* Make our first stream XXX - add our struct per stream */
+
+	/* Make our first stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
-#endif
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
 		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
@@ -750,7 +758,14 @@ static struct libtrace_format_t lodp = {
         NULL,              		/* trace_event */
         lodp_help,                     	/* help */
         NULL,                            /* next pointer */
-        NON_PARALLEL(false)
+	{true, 8},                      /* Live, NICs typically have 8 threads */
+	lodp_pstart_input,              /* pstart_input */
+	lodp_pread_packets,             /* pread_packets */
+	lodp_pause_input,               /* ppause */
+	lodp_fin_input,                 /* p_fin */
+	lodp_pregister_thread,          /* pregister_thread */
+	lodp_punregister_thread,        /* punregister_thread */
+	NULL				/* get thread stats */ 
 };
 
 void odp_constructor(void) 

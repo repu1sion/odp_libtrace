@@ -17,8 +17,8 @@ RED='\033[0;31m'
 NC='\033[0m' # No Color
 
 HEADER1="include"
-HEADER2="platform/linux-dpdk"
-HEADER2="platform/linux-dpdk/arch/x86"
+HEADER2="platform/linux-dpdk/include"
+HEADER3="platform/linux-dpdk/arch/x86"
 
 ODP_DPDK_PATH=""
 SEARCH_PATH="/"

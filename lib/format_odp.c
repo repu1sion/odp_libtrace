@@ -150,7 +150,7 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	//forming params -------------------------------------------------------
 	printf("uridata: %s \n", uridata);
-	strcpy(dpdk_params, "-n 4 -w ");
+	strcpy(dpdk_params, "-c 0xF -n 4 -w ");
 	strcat(dpdk_params, uridata);
 	printf("dpdk params passed: %s \n", dpdk_params);
 
@@ -179,11 +179,17 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
         }
 
         /* Create thread structure for ODP */		//XXX - maybe ODP_THREAD_CONTROL ?
-        if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
+	int i;
+	for (i = 0; i < 4; i++)
 	{
-                fprintf(stderr, "Error: ODP local init failed.\n");
-                exit(EXIT_FAILURE);
-        }
+		if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
+		{
+			fprintf(stderr, "Error: ODP local init failed.\n");
+			exit(EXIT_FAILURE);
+		}
+		else
+			printf("worker thread #%d was inited successfully\n", i);
+	}
 
         /* Creating pool */
         pool = odp_pool_lookup("packet_pool");
@@ -257,7 +263,7 @@ static int lodp_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->pkts_read = 0;
 
 	/* Make our first stream */
-	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(struct dpdk_per_stream_t));
+	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
@@ -328,7 +334,7 @@ static int lodp_start_input(libtrace_t *libtrace)
 {
 	int ret;
 
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 #if 0
 	if (libtrace->io) // io - the libtrace IO reader for this trace (if applicable)
@@ -343,13 +349,45 @@ static int lodp_start_input(libtrace_t *libtrace)
 #endif
 
 	//start pktio
-        fprintf(stdout, "going to start pktio\n");
+        printf("going to start pktio\n");
         ret = odp_pktio_start(FORMAT(libtrace)->pktio);
         if (ret != 0)
                 fprintf(stderr, "Error: unable to start pktio\n");
 
         printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
                 (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
+
+	return 0;
+}
+
+static int lodp_pstart_input(libtrace_t *libtrace) 
+{
+	int ret;
+
+	debug("%s() \n", __func__);
+
+        printf("going to start pktio\n");
+        ret = odp_pktio_start(FORMAT(libtrace)->pktio);
+        if (ret != 0)
+                fprintf(stderr, "Error: unable to start pktio\n");
+
+        printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
+                (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
+
+	return 0;
+}
+	
+/* Pauses an input trace - this function should close or detach the file or 
+   device that is being read from. 
+   @return 0 if successful, -1 in the event of error
+*/
+static int lodp_pause_input(libtrace_t * libtrace) 
+{
+	(void)libtrace;
+
+	printf("%s() \n", __func__);
+
+	printf("fake function. instead of pausing input - do nothing \n");
 
 	return 0;
 }
@@ -563,6 +601,30 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	return numbytes;
 }
 
+/**
+ * Read a batch of packets from the input stream related to thread.
+ * At most read nb_packets, however should return with less if packets
+ * are not waiting. However still must return at least 1, 0 still indicates
+ * EOF.
+ *
+ * @param libtrace	The input trace
+ * @param t	The thread
+ * @param packets	An array of packets
+ * @param nb_packets	The number of packets in the array (the maximum to read)
+ * @return The number of packets read, or 0 in the case of EOF or -1 in error or -2 to represent
+ * interrupted due to message waiting before packets had been read.
+ */
+static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
+{
+	int rv = 0;
+
+	debug("%s() \n", __func__);
+
+
+
+	return rv;
+}
+
 static void lodp_fin_packet(libtrace_packet_t *packet)
 {
 	debug("%s() \n", __func__);
@@ -704,6 +766,24 @@ static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
 	return tv;
 }
 
+static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, bool reader)
+{
+	int rv = 0;
+
+	debug("%s() \n", __func__);
+	//XXX - implementation
+
+	return rv;	
+}
+
+static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
+{
+	debug("%s() \n", __func__);
+	//XXX - implementation
+
+	return;
+}
+
 static void lodp_help(void)
 {
 	printf("Endace ODP format module\n");
@@ -726,7 +806,7 @@ static struct libtrace_format_t lodp = {
         lodp_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
         lodp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
-        NULL,                           /* pause_input */
+        lodp_pause_input,               /* pause_input */
         lodp_init_output,               /* init_output - Initialises an output trace using the capture format. */
         lodp_config_output,             /* config_output */
         lodp_start_output,              /* start_output */
@@ -757,12 +837,12 @@ static struct libtrace_format_t lodp = {
         NULL,                           /* get_fd */
         NULL,              		/* trace_event */
         lodp_help,                     	/* help */
-        NULL,                            /* next pointer */
+        NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	lodp_pstart_input,              /* pstart_input */
 	lodp_pread_packets,             /* pread_packets */
 	lodp_pause_input,               /* ppause */
-	lodp_fin_input,                 /* p_fin */
+	lodp_fin_input,                 /* p_fin 					- \/ */
 	lodp_pregister_thread,          /* pregister_thread */
 	lodp_punregister_thread,        /* punregister_thread */
 	NULL				/* get thread stats */ 

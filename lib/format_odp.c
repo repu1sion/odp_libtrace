@@ -28,6 +28,8 @@
 #define DATAOUT(x) ((struct odp_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
+#define WIRELEN_DROPLEN 4
+
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
 #define DEBUG
@@ -485,9 +487,8 @@ loss counters and packet types to match the packet record provided
 in the buffer. This is a zero-copy function.
 */
 
-#define WIRELEN_DROPLEN 4
 
-static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
+static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
 {
 	debug("%s() \n", __func__);
@@ -500,16 +501,20 @@ static int lodp_prepare_packet(libtrace_t *libtrace, libtrace_packet_t *packet,
                 packet->buf_control = TRACE_CTRL_PACKET;
         } else
                 packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
-/*
-	void *header;			**< Pointer to the framing header *
-	void *payload;			**< Pointer to the link layer *
-	void *buffer;			**< Allocated buffer *
-*/
+
+/*	void *header;			**< Pointer to the framing header *
+ *	void *payload;			**< Pointer to the link layer *
+ *	void *buffer;			**< Allocated buffer */
         packet->buffer = buffer;
         packet->header = buffer;
+
+/*	MOVED THIS PART to lodp_read_packet()
+	-----
 	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
 	packet->capture_length = FORMAT(libtrace)->pkt_len;
 	packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+	-----
+*/
 	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
 	packet->type = rt_type;
 
@@ -535,7 +540,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
 	{
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
-		debug("%s() - waiting for packet!\n", __func__);
+		//debug("%s() - waiting for packet!\n", __func__);
                 ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
 
 		//if we got Ctrl-C from one of our utilities, etc
@@ -626,6 +631,10 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	{
 		packet->buffer = FORMAT(libtrace)->pkt;
 		packet->capture_length = FORMAT(libtrace)->pkt_len;
+		//part below moved from lodp_prepare_packet()
+		packet->payload = FORMAT(libtrace)->l2h; 
+		packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+		//-----
 		debug("pointer to packet: %p \n", packet->buffer);
                 if (!packet->buffer) 
 		{
@@ -641,7 +650,7 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 }
 
 //need to get struct per_stream from thread and use its pointers
-static int lodp_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t)
+static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
 {
 	int numbytes;
 	odp_event_t ev;
@@ -683,7 +692,8 @@ static int lodp_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t)
                 numbytes = stream->pkt_len;
 		stream->pkts_read++;
 	
-		debug("packet is %d bytes, total packets: %u\n", numbytes, stream->pkts_read);
+		debug("thread: #%d, packet is %d bytes, total packets: %u\n",
+			 t->perpkt_num, numbytes, stream->pkts_read);
 		return numbytes;
 	}
 
@@ -710,6 +720,7 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 	int numbytes = 0;
 	uint32_t flags = 0;
 	unsigned int i;
+	odp_per_stream_t *stream = t->format_data;
 
 	debug("%s() \n", __func__);
 
@@ -718,6 +729,21 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 
 	for (i = 0; i < nb_packets; i++, pkts_read++)
 	{
+		//#0. Free the last packet buffer
+		if (packets[i]->buffer) 
+		{
+			//Check buffer memory is owned by the packet. It is if flag is TRACE_CTRL_PACKET
+			assert(packets[i]->buf_control == TRACE_CTRL_PACKET); 
+			free(packets[i]->buffer);
+			packets[i]->buffer = NULL;
+		}
+
+		//#1. Set packet fields
+		//TRACE_CTRL_EXTERNAL means buffer memory is owned by an external source, this is it, odp pool.
+		packets[i]->buf_control = TRACE_CTRL_EXTERNAL;
+		packets[i]->type = TRACE_RT_DATA_ODP;
+
+		//#2. Read a packet from odp. We wait here forever till packet appears.
 		numbytes = lodp_pread_pack(trace, t);
 		if (numbytes == -1) 
 		{
@@ -731,13 +757,28 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 			break;
 		}
 
-		//XXX - freeing packets etc ?
+		//#3. Get pointer from packet and assign it to packet->buffer
+		if (!packets[i]->buffer || packets[i]->buf_control == TRACE_CTRL_EXTERNAL) 
+		{
+			packets[i]->buffer = stream->pkt; 
+			packets[i]->capture_length = stream->pkt_len;
+			packets[i]->payload = stream->l2h; 
+			packets[i]->wire_length = stream->pkt_len + WIRELEN_DROPLEN;
+			debug("pointer to packet: %p \n", packets[i]->buffer);
+			if (!packets[i]->buffer) 
+			{
+				trace_set_err(trace, errno, "Cannot allocate memory or invalid pointer to packet");
+				return -1;
+			}
+		}
 
+#if 1
 		if (lodp_prepare_packet(trace, packets[i], packets[i]->buffer, packets[i]->type, flags))
 		{
 			pkts_read = -1;
 			break;
 		}
+#endif
 	}
 
 	debug("%s() exit with pkts_read : %d \n", __func__, pkts_read);
@@ -869,6 +910,8 @@ static double lodp_get_seconds(const libtrace_packet_t *packet)
 	return seconds;
 }
 
+//sequence of calling time functions from trace_get_erf_timestamp():
+//1)erf 2)timespec 3)timewal 4)seconds
 static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
 {
 	struct timeval tv;
@@ -879,11 +922,23 @@ static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
 	(void)p;
 
 	gettimeofday(&tv, NULL);
-
+/*
 	debug("packet header: %p, seconds: %zu , microseconds: %zu \n",
 		packet->header, tv.tv_sec, tv.tv_usec);
+*/
 
 	return tv;
+}
+
+static uint64_t lodp_get_erf_timestamp(const libtrace_packet_t *packet UNUSED)
+{
+	uint64_t rv = 0;
+
+/*
+	debug("packet header: %p, seconds: %zu , microseconds: %zu \n",
+		packet->header, tv.tv_sec, tv.tv_usec);
+*/
+	return rv;
 }
 
 //libtrace creates threads with pthread_create(), then fills libtrace_thread_t struct and passes ptr to it here (*t)
@@ -969,7 +1024,8 @@ static struct libtrace_format_t lodp = {
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
-        NULL,          			/* get_erf_timestamp */
+	NULL,				/* get_erf_timestamp */
+/*	lodp_get_erf_timestamp,         */
         lodp_get_timeval,               /* get_timeval */
 	NULL,				/* get_timespec */
         lodp_get_seconds,               /* get_seconds */

@@ -62,6 +62,10 @@ struct odp_format_data_out_t {
 typedef struct odp_per_stream_s {
 	int id;
 	int core;
+	odp_packet_t pkt;
+	int pkt_len;
+	u_char *l2h;
+	unsigned int pkts_read;
 } odp_per_stream_t;
 
 
@@ -282,7 +286,8 @@ static int lodp_init_input(libtrace_t *libtrace)
 
 	/* Make our first stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));
-	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copy inside, so its ok to alloc on stack.
+	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
+
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
 		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
@@ -378,12 +383,27 @@ static int lodp_start_input(libtrace_t *libtrace)
 	return 0;
 }
 
-//XXX - now it doesn't differ from usual lodp_start_input()
 static int lodp_pstart_input(libtrace_t *libtrace) 
 {
 	int ret;
+	int i;
+	odp_per_stream_t *stream;
+	odp_per_stream_t empty_stream;
+	int num_threads = libtrace->perpkt_thread_count;
 
-	debug("%s() \n", __func__);
+	debug("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
+
+	memset(&empty_stream, 0x0, sizeof(odp_per_stream_t));
+
+	for (i = 0; i < num_threads; i++)
+	{
+		//we add all missed structs here per required threads
+		if (libtrace_list_get_size(FORMAT(libtrace)->per_stream) <= (size_t) i)
+			libtrace_list_push_back(FORMAT(libtrace)->per_stream, &empty_stream);
+		//we just get a pointer to our per_stream struct (which is filled with zeroes yet)
+		stream = libtrace_list_get_index(FORMAT(libtrace)->per_stream, i)->data;
+		stream->id = i;
+	}
 
         printf("going to start pktio\n");
         ret = odp_pktio_start(FORMAT(libtrace)->pktio);
@@ -438,9 +458,8 @@ static int lodp_fin_input(libtrace_t *libtrace)
 		wandio_destroy(libtrace->io);
 		printf("wandio destroyed\n");
 	}
-	else
-		printf("there is no wandio to destroy\n");
 
+	libtrace_list_deinit(FORMAT(libtrace)->per_stream);
 	free(libtrace->format_data);
 
 	return 0;
@@ -529,7 +548,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
 		{
-        		debug("%s() - packet is INVALID, skipping, or NO PACKET\n", __func__);
+        		//debug("%s() - packet is INVALID, skipping, or NO PACKET\n", __func__);
                         continue;
 		}
 		else
@@ -621,6 +640,57 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	return numbytes;
 }
 
+//need to get struct per_stream from thread and use its pointers
+static int lodp_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t)
+{
+	int numbytes;
+	odp_event_t ev;
+	odp_per_stream_t *stream = t->format_data;
+
+	while (1) 
+	{
+                /* Use schedule to get buf from any input queue. 
+		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
+		//debug("%s() - waiting for packet!\n", __func__);
+                ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
+
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
+                stream->pkt = odp_packet_from_event(ev);
+                if (!odp_packet_is_valid(stream->pkt))
+		{
+        		//debug("%s() - packet is INVALID, skipping, or NO PACKET\n", __func__);
+                        continue;
+		}
+		else
+		{
+#ifdef OPTION_PRINT_PACKETS
+        		fprintf(stdout, "%s() - packet is valid, print:\n", __func__);
+        		fprintf(stdout, "--------------------------------------------------\n");
+			odp_packet_print(stream->pkt);
+        		fprintf(stdout, "--------------------------------------------------\n");
+#endif
+		}
+
+                //Returns pointer to the start of the layer 2 header
+                stream->l2h = (u_char *)odp_packet_l2_ptr(stream->pkt, NULL);
+                stream->pkt_len = (int)odp_packet_len(stream->pkt);
+                numbytes = stream->pkt_len;
+		stream->pkts_read++;
+	
+		debug("packet is %d bytes, total packets: %u\n", numbytes, stream->pkts_read);
+		return numbytes;
+	}
+
+	/* We'll NEVER get here */
+	return READ_ERROR;
+}
+
 /**
  * Read a batch of packets from the input stream related to thread.
  * At most read nb_packets, however should return with less if packets
@@ -648,7 +718,7 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 
 	for (i = 0; i < nb_packets; i++, pkts_read++)
 	{
-		numbytes = lodp_read_pack(trace);
+		numbytes = lodp_pread_pack(trace, t);
 		if (numbytes == -1) 
 		{
 			trace_set_err(trace, errno, "Reading odp packet failed");
@@ -830,8 +900,7 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 		debug("trying to register a reader thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
 			t, t->type, t->tid, t->perpkt_num);
 
-		/* Attach our thread */
-		//if this is usual reader thread
+		//Bind thread and its per_thread struct
 		if(t->type == THREAD_PERPKT) 
 		{
 			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream, t->perpkt_num)->data;

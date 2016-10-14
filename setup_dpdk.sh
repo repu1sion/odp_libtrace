@@ -12,8 +12,8 @@ lsmod | grep -i uio
 
 # bind network card to dpdk driver
 cd $RTE_SDK/tools/
-sudo ./dpdk_nic_bind.py -b igb_uio 0000:03:00.0
-sudo ./dpdk_nic_bind.py --status
+sudo ./dpdk-devbind.py -b igb_uio 0000:03:00.0
+sudo ./dpdk-devbind.py --status
 
 # setup hugepages
 sudo sysctl -w vm.nr_hugepages=1000

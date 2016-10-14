@@ -11,6 +11,8 @@
 #export RTE_TARGET=x86_64-native-linuxapp-gcc
 #export LDFLAGS='-L/usr/local/lib/'
 
+INSTALL_WANDIO=0
+
 # colors
 WHITE='\033[1;37m'
 RED='\033[0;31m'
@@ -38,6 +40,20 @@ else
 	echo -e "${RED}odp-dpdk was not found. please try to pass its path as an argument to that script ${NC}"
 	exit 1
 fi
+
+
+# dl and install wandio
+if [ $INSTALL_WANDIO -eq 1 ]; then
+	echo "installing wandio"
+	wget http://research.wand.net.nz/software/wandio/wandio-1.0.4.tar.gz
+	tar zxvf wandio-1.0.4.tar.gz
+	cd wandio-1.0.4/
+	./configure 
+	make
+	make install
+	ldconfig
+fi
+
 
 # configuring
 ./bootstrap.sh

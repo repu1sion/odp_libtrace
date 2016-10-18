@@ -679,6 +679,7 @@ static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
 		else
 		{
 #ifdef OPTION_PRINT_PACKETS
+			fprintf(stdout, "\n\n NEW PACKET \n");
         		fprintf(stdout, "%s() - packet is valid, print:\n", __func__);
         		fprintf(stdout, "--------------------------------------------------\n");
 			odp_packet_print(stream->pkt);
@@ -764,6 +765,8 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 			packets[i]->capture_length = stream->pkt_len;
 			packets[i]->payload = stream->l2h; 
 			packets[i]->wire_length = stream->pkt_len + WIRELEN_DROPLEN;
+			packets[i]->trace = trace;
+			packets[i]->error = 1;
 			debug("pointer to packet: %p \n", packets[i]->buffer);
 			if (!packets[i]->buffer) 
 			{
@@ -771,7 +774,6 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 				return -1;
 			}
 		}
-
 #if 1
 		if (lodp_prepare_packet(trace, packets[i], packets[i]->buffer, packets[i]->type, flags))
 		{

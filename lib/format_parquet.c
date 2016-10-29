@@ -1,6 +1,4 @@
-/* format odp support 
- *
- */
+// format parq support
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -301,7 +299,7 @@ static int lodp_init_input(libtrace_t *libtrace)
 }
 
 //Initialises an output trace using the capture format.
-static int lodp_init_output(libtrace_out_t *libtrace) 
+static int parq_init_output(libtrace_out_t *libtrace) 
 {
 	char err[500] = {0};
 
@@ -311,13 +309,12 @@ static int lodp_init_output(libtrace_out_t *libtrace)
 	
 
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
-#if 1
-	OUTPUT->file = 0;
+	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
-#endif
 
+#if 0
 	//this is same we do in odp_init_input(), but with odp_format_data_out_t struct
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
 		trace_set_err_out(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
@@ -325,12 +322,12 @@ static int lodp_init_output(libtrace_out_t *libtrace)
 		libtrace->format_data = NULL;
 		return -1;
 	}
+#endif
 
 	return 0;
 }
 
-//not used
-static int lodp_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
+static int parq_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
 	printf("%s() \n", __func__);
 
@@ -433,16 +430,23 @@ static int lodp_pause_input(libtrace_t * libtrace)
 	return 0;
 }
 
-static int lodp_start_output(libtrace_out_t *libtrace) 
+static int parq_start_output(libtrace_out_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
+	//wandio_wcreate() called inside
 	OUTPUT->file = trace_open_file_out(libtrace, 
 						OUTPUT->compress_type,
 						OUTPUT->level,
 						OUTPUT->fileflag);
-	if (!OUTPUT->file) {
+	if (!OUTPUT->file) 
+	{
+		printf("<error> can't open out file with wandio\n");
 		return -1;
+	}
+	else
+	{
+		printf("opened out file with wandio successfully\n");
 	}
 	return 0;
 }
@@ -467,7 +471,7 @@ static int lodp_fin_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int lodp_fin_output(libtrace_out_t *libtrace) 
+static int parq_fin_output(libtrace_out_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
@@ -800,7 +804,7 @@ static void lodp_fin_packet(libtrace_packet_t *packet)
 }
 
 
-static int lodp_write_packet(libtrace_out_t *libtrace, 
+static int parq_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
 	debug("%s() \n", __func__);
@@ -1006,25 +1010,25 @@ static void lodp_help(void)
 
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
-static struct libtrace_format_t lodp = {
-        "odp",				/* name used in URI to identify capture format - odp:iface */
+static struct libtrace_format_t parq = {
+        "parq",				/* name used in URI to identify capture format - odp:iface */
         "$Id$",				/* version of this module */
-        TRACE_FORMAT_ODP,		/* The RT protocol type of this module */
+        TRACE_FORMAT_PARQ,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
         lodp_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
         lodp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
         lodp_pause_input,               /* pause_input */
-        lodp_init_output,               /* init_output - Initialises an output trace using the capture format. */
-        lodp_config_output,             /* config_output */
-        lodp_start_output,              /* start_output */
+        parq_init_output,               /* init_output - Initialises an output trace using the capture format. */
+        parq_config_output,             /* config_output */
+        parq_start_output,              /* start_output */
         lodp_fin_input,	               	/* fin_input - Stops capture input data.*/
-        lodp_fin_output,                /* fin_output */
+        parq_fin_output,                /* fin_output */
         lodp_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
 	lodp_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
-        lodp_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+        parq_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */
@@ -1058,8 +1062,8 @@ static struct libtrace_format_t lodp = {
 	NULL				/* get thread stats */ 
 };
 
-void odp_constructor(void) 
+void parq_constructor(void) 
 {
-	printf("registering odp struct with address: %p , odp_init_output: %p\n", &lodp, lodp.init_output);
-	register_format(&lodp);
+	printf("registering parq struct with address: %p , odp_init_output: %p\n", &parq, parq.init_output);
+	register_format(&parq);
 }

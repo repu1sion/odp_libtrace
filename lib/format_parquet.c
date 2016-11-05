@@ -826,6 +826,7 @@ static int parq_write_packet(libtrace_out_t *libtrace,
 		OUTPUT->dag_version = packet->type;
 	}
 #endif
+	//seems like we are writing just raw packet in file
 	if ((numbytes = wandio_wwrite(OUTPUT->file, packet->payload, trace_get_capture_length(packet))) !=
 				(int)trace_get_capture_length(packet)) 
 	{

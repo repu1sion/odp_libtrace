@@ -393,6 +393,7 @@ enum base_format_t {
     TRACE_FORMAT_DPDK     =17, /**< The Intel Data Plane Development Kit format */
 	TRACE_FORMAT_ODP          =18,
 	TRACE_FORMAT_PARQ         =19,
+	TRACE_FORMAT_KAFKA        =20,
 };
 
 /** RT protocol packet types */
@@ -448,7 +449,7 @@ typedef enum {
 	TRACE_RT_DATA_DPDK=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_DPDK,
 	/** ODP support */
 	TRACE_RT_DATA_ODP=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_ODP,
-	TRACE_RT_DATA_PARQ=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_PARQ,
+	TRACE_RT_DATA_KAFKA=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_KAFKA,
 
 	/** As PCAP does not store the linktype with the packet, we need to 
 	 * create a separate RT type for each supported DLT, starting from

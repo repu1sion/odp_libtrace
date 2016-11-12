@@ -50,7 +50,7 @@ export CXXFLAGS += $(SAVED_CXXFLAGS)
 endif
 
 #ODP support
-NATIVEFORMATS+= format_odp.c format_parquet.c
+NATIVEFORMATS+= format_odp.c format_parquet.c format_kafka.c
 
 libtrace_la_SOURCES = trace.c trace_parallel.c common.h \
 		format_erf.c format_pcap.c format_legacy.c \

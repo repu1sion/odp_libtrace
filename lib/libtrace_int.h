@@ -1265,6 +1265,7 @@ void dpdk_constructor(void);
 //ODP support
 /** Constructor for the ODP format module */
 void odp_constructor(void);
+void kafka_constructor(void);
 void parq_constructor(void);
 
 

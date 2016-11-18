@@ -25,8 +25,8 @@
 #define SHM_PKT_POOL_SIZE      (512*2048)
 #define SHM_PKT_POOL_BUF_SIZE  1856
 
-#define FORMAT(x) ((struct odp_format_data_t *)x->format_data)
-#define DATAOUT(x) ((struct odp_format_data_out_t *)x->format_data)
+#define FORMAT(x) ((struct kafka_format_data_t *)x->format_data)
+#define DATAOUT(x) ((struct kafka_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
 #define WIRELEN_DROPLEN 4
@@ -42,7 +42,17 @@
  #define debug(x...)
 #endif
 
-struct odp_format_data_t {
+struct kafka_format_data_t {
+	//kafka vars
+	rd_kafka_t *rk;
+        rd_kafka_conf_t *conf;                  //main conf object
+        rd_kafka_topic_t *rkt;                  //topic object
+        rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
+        int partition;
+        char topic[20];                   	//our custom topic
+        char brokers[30];
+        char errstr[512];
+	//other vars
 	odp_instance_t odp_instance;
 	int pvt;			//for private data saving
 	unsigned int pkts_read;
@@ -54,7 +64,7 @@ struct odp_format_data_t {
 	libtrace_list_t *per_stream;	//pointer to the whole list structure: head, tail, size etc inside.
 };
 
-struct odp_format_data_out_t {
+struct kafka_format_data_out_t {
 	//kafka vars
 	rd_kafka_t *rk;
         rd_kafka_conf_t *conf;                  //main conf object
@@ -116,7 +126,13 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 }
 #endif
 
-static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
+static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
+{
+	printf("%.*s\n", (int)rkmessage->len, (char *)rkmessage->payload);
+}
+
+#if 0
+static int lodp_init_environment(char *uridata, struct kafka_format_data_t *format_data, char *err, int errlen)
 {
 	//int ret; //returned error codes
 	//struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
@@ -280,20 +296,19 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	return 0;
 }
+#endif
 
 /* Initialises an input trace using the capture format. 
    @param libtrace 	The input trace to be initialised */
-static int lodp_init_input(libtrace_t *libtrace) 
+static int kafka_init_input(libtrace_t *libtrace) 
 {
-	char err[500] = {0};
-
 	printf("%s() \n", __func__);
 
 	odp_per_stream_t stream;
 	memset(&stream, 0x0, sizeof(odp_per_stream_t));
 
-	//init all the data in odp_format_data_t
-	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
+	//init all the data in kafka_format_data_t
+	libtrace->format_data = malloc(sizeof(struct kafka_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
 
@@ -301,6 +316,47 @@ static int lodp_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
 
+	//init kafka
+	FORMAT(libtrace)->partition = 0;
+	strcpy(FORMAT(libtrace)->topic, "test");
+	strcpy(FORMAT(libtrace)->brokers, "localhost:9092");
+	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
+
+	FORMAT(libtrace)->conf = rd_kafka_conf_new();
+        rd_kafka_conf_set(FORMAT(libtrace)->conf, "compression.codec", "snappy",
+		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
+        //the min numb of messages to wait for to accumulate before sending
+        rd_kafka_conf_set(FORMAT(libtrace)->conf, "batch.num.messages", "100",
+		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
+
+        //topic configuration
+        FORMAT(libtrace)->topic_conf = rd_kafka_topic_conf_new();
+
+        //----- create kafka handle -----
+        FORMAT(libtrace)->rk = rd_kafka_new(RD_KAFKA_CONSUMER, FORMAT(libtrace)->conf, 
+		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
+        if (!FORMAT(libtrace)->rk)
+        {
+                fprintf(stderr, "%% Failed to create new producer: %s\n", FORMAT(libtrace)->errstr);
+                exit(1);
+        }
+
+        rd_kafka_set_log_level(FORMAT(libtrace)->rk, LOG_DEBUG);
+
+        //add brokers
+        if (!rd_kafka_brokers_add(FORMAT(libtrace)->rk, FORMAT(libtrace)->brokers))
+        {
+                fprintf(stderr, "%% No valid brokers specified\n");
+                exit(1);
+        }
+
+        //create topic
+        FORMAT(libtrace)->rkt = rd_kafka_topic_new(FORMAT(libtrace)->rk, 
+		FORMAT(libtrace)->topic, FORMAT(libtrace)->topic_conf);
+        FORMAT(libtrace)->topic_conf = NULL; /* Now owned by topic */
+
+
+/*
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
 		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
@@ -308,20 +364,18 @@ static int lodp_init_input(libtrace_t *libtrace)
 		libtrace->format_data = NULL;
 		return -1;
 	}
+*/
 	return 0;
 }
 
 //Initialises an output trace using the capture format.
 static int kafka_init_output(libtrace_out_t *libtrace) 
 {
-	char err[500] = {0};
-
 	printf("%s() \n", __func__);
 
         fprintf(stderr, "Init output!()\n");
-	
 
-	libtrace->format_data = malloc(sizeof(struct odp_format_data_out_t));
+	libtrace->format_data = malloc(sizeof(struct kafka_format_data_out_t));
 	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
@@ -366,7 +420,7 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 
 
 #if 0
-	//this is same we do in odp_init_input(), but with odp_format_data_out_t struct
+	//this is same we do in odp_init_input(), but with kafka_format_data_out_t struct
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err)) != 0) {
 		trace_set_err_out(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
 		free(libtrace->format_data);
@@ -403,9 +457,9 @@ static int kafka_config_output(libtrace_out_t *libtrace, trace_option_output_t o
 	assert(0);
 }
 
-static int lodp_start_input(libtrace_t *libtrace) 
+static int kafka_start_input(libtrace_t *libtrace) 
 {
-	int ret;
+	int ret = 0;
 
 	debug("%s() \n", __func__);
 
@@ -421,6 +475,7 @@ static int lodp_start_input(libtrace_t *libtrace)
 	}
 #endif
 
+#if 0
 	//start pktio
         printf("going to start pktio\n");
         ret = odp_pktio_start(FORMAT(libtrace)->pktio);
@@ -429,8 +484,26 @@ static int lodp_start_input(libtrace_t *libtrace)
 
         printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
                 (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
+#endif
 
-	return 0;
+	/* Start consuming */
+	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
+		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
+	{
+		fprintf(stderr, "<error> failed to start consuming!\n");
+		/*
+		rd_kafka_resp_err_t err = rd_kafka_last_error();
+		fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(err));
+		if (err == RD_KAFKA_RESP_ERR__INVALID_ARG)
+			fprintf(stderr, "%% Broker based offset storage "
+				"requires a group.id, add: -X group.id=yourGroup\n");
+		*/
+		
+		ret = -1;
+		return ret;
+	}
+
+	return ret;
 }
 
 static int lodp_pstart_input(libtrace_t *libtrace) 
@@ -605,17 +678,38 @@ static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *p
 /* internal function (not a registered format routine).
  * with ODP_SCHED_NO_WAIT we always skip to a next iteration with 'continue'
  * but anyway we have a forever loop here till get a new packet */
-static int lodp_read_pack(libtrace_t *libtrace)
+static int kafka_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
-	odp_event_t ev;
 
 	while (1) 
 	{
+		rd_kafka_message_t *rkmessage;
+		//rd_kafka_resp_err_t err;
+
+		/* Poll for errors, etc. */
+		rd_kafka_poll(FORMAT(libtrace)->rk, 0);
+
+		/* Consume single message. See rdkafka_performance.c for high speed */
+		rkmessage = rd_kafka_consume(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition, 1000);
+		if (!rkmessage) /* timeout */
+			continue;
+
+		numbytes = rkmessage->len;
+		debug("msg received with len: %d \n", numbytes);
+
+		msg_consume(rkmessage, NULL);
+
+		/* Return message to rdkafka */
+		rd_kafka_message_destroy(rkmessage);
+
+
+#if 0
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
 		//debug("%s() - waiting for packet!\n", __func__);
                 ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
+#endif
 
 		//if we got Ctrl-C from one of our utilities, etc
 		if (libtrace_halt)
@@ -624,6 +718,9 @@ static int lodp_read_pack(libtrace_t *libtrace)
 			return READ_EOF;
 		}
 
+
+
+#if 0
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(FORMAT(libtrace)->pkt))
 		{
@@ -647,6 +744,9 @@ static int lodp_read_pack(libtrace_t *libtrace)
 		FORMAT(libtrace)->pkts_read++;
 	
 		debug("packet is %d bytes, total packets: %u\n", numbytes, FORMAT(libtrace)->pkts_read);
+#endif
+
+
 		return numbytes;
 	}
 
@@ -669,7 +769,7 @@ static int lodp_read_pack(libtrace_t *libtrace)
  */
 
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
-static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
+static int kafka_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
 	uint32_t flags = 0;
 	int numbytes = 0;
@@ -691,7 +791,7 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	packet->type = TRACE_RT_DATA_ODP;
 
 	//#2. Read a packet from odp. We wait here forever till packet appears.
-	numbytes = lodp_read_pack(libtrace);
+	numbytes = kafka_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
 		trace_set_err(libtrace, errno, "Reading odp packet failed");
@@ -724,18 +824,40 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 }
 
 //need to get struct per_stream from thread and use its pointers
-static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
+static int kafka_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t UNUSED)
 {
 	int numbytes;
-	odp_event_t ev;
+#if 0
 	odp_per_stream_t *stream = t->format_data;
+#endif
 
 	while (1) 
 	{
+		rd_kafka_message_t *rkmessage;
+		//rd_kafka_resp_err_t err;
+
+		/* Poll for errors, etc. */
+		rd_kafka_poll(FORMAT(libtrace)->rk, 0);
+
+		/* Consume single message. See rdkafka_performance.c for high speed */
+		rkmessage = rd_kafka_consume(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition, 1000);
+		if (!rkmessage) /* timeout */
+			continue;
+
+		numbytes = rkmessage->len;
+		debug("msg received with len: %d \n", numbytes);
+
+		msg_consume(rkmessage, NULL);
+
+		/* Return message to rdkafka */
+		rd_kafka_message_destroy(rkmessage);
+
+#if 0
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
 		//debug("%s() - waiting for packet!\n", __func__);
                 ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
+#endif
 
 		//if we got Ctrl-C from one of our utilities, etc
 		if (libtrace_halt)
@@ -744,6 +866,7 @@ static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
 			return READ_EOF;
 		}
 
+#if 0
                 stream->pkt = odp_packet_from_event(ev);
                 if (!odp_packet_is_valid(stream->pkt))
 		{
@@ -769,6 +892,7 @@ static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
 	
 		debug("thread: #%d, packet is %d bytes, total packets: %u\n",
 			 t->perpkt_num, numbytes, stream->pkts_read);
+#endif
 		return numbytes;
 	}
 
@@ -789,7 +913,7 @@ static int lodp_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t)
  * @return The number of packets read, or 0 in the case of EOF or -1 in error or -2 to represent
  * interrupted due to message waiting before packets had been read.
  */
-static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
+static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
 {
 	int pkts_read = 0;
 	int numbytes = 0;
@@ -819,7 +943,7 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 		packets[i]->type = TRACE_RT_DATA_ODP;
 
 		//#2. Read a packet from odp. We wait here forever till packet appears.
-		numbytes = lodp_pread_pack(trace, t);
+		numbytes = kafka_pread_pack(trace, t);
 		if (numbytes == -1) 
 		{
 			trace_set_err(trace, errno, "Reading odp packet failed");
@@ -1094,16 +1218,16 @@ static struct libtrace_format_t kafka = {
         TRACE_FORMAT_KAFKA,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
-        lodp_init_input,	        /* init_input - Initialises an input trace using the capture format */
+        kafka_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
-        lodp_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
+        kafka_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
         lodp_pause_input,               /* pause_input */
         kafka_init_output,               /* init_output - Initialises an output trace using the capture format. */
         kafka_config_output,             /* config_output */
         kafka_start_output,              /* start_output */
         lodp_fin_input,	               	/* fin_input - Stops capture input data.*/
         kafka_fin_output,                /* fin_output */
-        lodp_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
+        kafka_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
 	lodp_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
         kafka_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
@@ -1132,7 +1256,7 @@ static struct libtrace_format_t kafka = {
         NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	lodp_pstart_input,              /* pstart_input */
-	lodp_pread_packets,             /* pread_packets */
+	kafka_pread_packets,             /* pread_packets */
 	lodp_pause_input,               /* ppause */
 	lodp_fin_input,                 /* p_fin 					- \/ */
 	lodp_pregister_thread,          /* pregister_thread */

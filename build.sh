@@ -72,6 +72,4 @@ fi
 
 # building
 echo -e "${WHITE}number of cores detected: $NUMCORES ${NC}"
-make -j${NUMCORES}
-sudo make install
-sudo ldconfig
+make -j${NUMCORES} && sudo make install && sudo ldconfig

@@ -301,7 +301,9 @@ static int lodp_init_input(libtrace_t *libtrace)
 //Initialises an output trace using the capture format.
 static int parq_init_output(libtrace_out_t *libtrace) 
 {
+#if 0
 	char err[500] = {0};
+#endif
 
 	printf("%s() \n", __func__);
 

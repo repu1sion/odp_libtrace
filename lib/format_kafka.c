@@ -53,11 +53,12 @@ struct kafka_format_data_t {
         char brokers[30];
         char errstr[512];
 	//other vars
+	void *pkt;			//store received packet here
 	odp_instance_t odp_instance;
 	int pvt;			//for private data saving
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
-	odp_packet_t pkt;		//ptr for current packet which we pass to prepare_packet()
+	//odp_packet_t pkt;		//ptr for current packet which we pass to prepare_packet()
 	int pkt_len;			//length of current packet
 	u_char *l2h;			//l2 header for current packet
 	/* Our parallel streams */
@@ -128,7 +129,7 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
 {
-	printf("%.*s\n", (int)rkmessage->len, (char *)rkmessage->payload);
+	printf("len: %d , payload: %s\n", (int)rkmessage->len, (char *)rkmessage->payload);
 }
 
 #if 0
@@ -575,13 +576,13 @@ static int kafka_start_output(libtrace_out_t *libtrace)
 	return 0;
 }
 
-static int lodp_fin_input(libtrace_t *libtrace) 
+static int kafka_fin_input(libtrace_t *libtrace) 
 {
 	printf("%s() \n", __func__);
 
-        odp_pktio_stop(FORMAT(libtrace)->pktio);
-        odp_pktio_close(FORMAT(libtrace)->pktio);
-	printf("pktio stopped and closed \n");
+        //odp_pktio_stop(FORMAT(libtrace)->pktio);
+        //odp_pktio_close(FORMAT(libtrace)->pktio);
+	//printf("pktio stopped and closed \n");
 
 	if (libtrace->io)
 	{
@@ -695,6 +696,11 @@ static int kafka_read_pack(libtrace_t *libtrace)
 		if (!rkmessage) /* timeout */
 			continue;
 
+		//copy received packet to internally allocated ram
+		FORMAT(libtrace)->pkt = malloc(rkmessage->len);
+		memcpy(FORMAT(libtrace)->pkt, rkmessage->payload, rkmessage->len);
+		FORMAT(libtrace)->pkt_len = rkmessage->len;
+		
 		numbytes = rkmessage->len;
 		debug("msg received with len: %d \n", numbytes);
 
@@ -805,8 +811,7 @@ static int kafka_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	{
 		packet->buffer = FORMAT(libtrace)->pkt;
 		packet->capture_length = FORMAT(libtrace)->pkt_len;
-		//part below moved from lodp_prepare_packet()
-		packet->payload = FORMAT(libtrace)->l2h; 
+		packet->payload = packet->buffer;
 		packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
 		//-----
 		debug("pointer to packet: %p \n", packet->buffer);
@@ -986,13 +991,13 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 	return pkts_read;
 }
 
-static void lodp_fin_packet(libtrace_packet_t *packet)
+static void kafka_fin_packet(libtrace_packet_t *packet)
 {
 	debug("%s() \n", __func__);
 
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		odp_packet_free(packet->buffer);
+		free(packet->buffer);
 		packet->buffer = NULL;
 	}
 }
@@ -1225,11 +1230,11 @@ static struct libtrace_format_t kafka = {
         kafka_init_output,               /* init_output - Initialises an output trace using the capture format. */
         kafka_config_output,             /* config_output */
         kafka_start_output,              /* start_output */
-        lodp_fin_input,	               	/* fin_input - Stops capture input data.*/
+        kafka_fin_input,	         /* fin_input - Stops capture input data.*/
         kafka_fin_output,                /* fin_output */
-        kafka_read_packet,        	/* read_packet - Reads the next packet from an input trace into the packet structure */
+        kafka_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet structure */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
-	lodp_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
+	kafka_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
         kafka_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
@@ -1258,7 +1263,7 @@ static struct libtrace_format_t kafka = {
 	lodp_pstart_input,              /* pstart_input */
 	kafka_pread_packets,             /* pread_packets */
 	lodp_pause_input,               /* ppause */
-	lodp_fin_input,                 /* p_fin 					- \/ */
+	kafka_fin_input,                 /* p_fin */
 	lodp_pregister_thread,          /* pregister_thread */
 	lodp_punregister_thread,        /* punregister_thread */
 	NULL				/* get thread stats */ 

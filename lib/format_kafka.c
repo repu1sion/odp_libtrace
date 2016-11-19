@@ -709,6 +709,9 @@ static int kafka_read_pack(libtrace_t *libtrace)
 		/* Return message to rdkafka */
 		rd_kafka_message_destroy(rkmessage);
 
+		if (rkmessage->len == 0)
+			continue;
+
 
 #if 0
                 /* Use schedule to get buf from any input queue. 

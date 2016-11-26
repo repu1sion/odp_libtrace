@@ -83,14 +83,14 @@ struct kafka_format_data_out_t {
 	iow_t *file;
 };
 
-typedef struct odp_per_stream_s {
+typedef struct kafka_per_stream_s {
 	int id;
 	int core;
-	odp_packet_t pkt;
+	void *pkt;			//store received packet here
 	int pkt_len;
 	u_char *l2h;
 	unsigned int pkts_read;
-} odp_per_stream_t;
+} kafka_per_stream_t;
 
 
 // A structure describing the location of a PCI device (from rte_pci.h)
@@ -305,8 +305,8 @@ static int kafka_init_input(libtrace_t *libtrace)
 {
 	printf("%s() \n", __func__);
 
-	odp_per_stream_t stream;
-	memset(&stream, 0x0, sizeof(odp_per_stream_t));
+	kafka_per_stream_t stream;
+	memset(&stream, 0x0, sizeof(kafka_per_stream_t));
 
 	//init all the data in kafka_format_data_t
 	libtrace->format_data = malloc(sizeof(struct kafka_format_data_t));
@@ -314,7 +314,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->pkts_read = 0;
 
 	/* Make our first stream */
-	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));
+	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(kafka_per_stream_t));
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
 
 	//init kafka
@@ -507,17 +507,17 @@ static int kafka_start_input(libtrace_t *libtrace)
 	return ret;
 }
 
-static int lodp_pstart_input(libtrace_t *libtrace) 
+static int kafka_pstart_input(libtrace_t *libtrace) 
 {
 	int ret;
 	int i;
-	odp_per_stream_t *stream;
-	odp_per_stream_t empty_stream;
+	kafka_per_stream_t *stream;
+	kafka_per_stream_t empty_stream;
 	int num_threads = libtrace->perpkt_thread_count;
 
 	debug("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
 
-	memset(&empty_stream, 0x0, sizeof(odp_per_stream_t));
+	memset(&empty_stream, 0x0, sizeof(kafka_per_stream_t));
 
 	for (i = 0; i < num_threads; i++)
 	{
@@ -529,13 +529,22 @@ static int lodp_pstart_input(libtrace_t *libtrace)
 		stream->id = i;
 	}
 
-        printf("going to start pktio\n");
-        ret = odp_pktio_start(FORMAT(libtrace)->pktio);
-        if (ret != 0)
-                fprintf(stderr, "Error: unable to start pktio\n");
-
-        printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
-                (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
+	/* Start consuming */
+	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
+		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
+	{
+		fprintf(stderr, "<error> failed to start consuming!\n");
+		/*
+		rd_kafka_resp_err_t err = rd_kafka_last_error();
+		fprintf(stderr, "%% Failed to start consuming: %s\n", rd_kafka_err2str(err));
+		if (err == RD_KAFKA_RESP_ERR__INVALID_ARG)
+			fprintf(stderr, "%% Broker based offset storage "
+				"requires a group.id, add: -X group.id=yourGroup\n");
+		*/
+		
+		ret = -1;
+		return ret;
+	}
 
 	return 0;
 }
@@ -560,11 +569,8 @@ static int kafka_start_output(libtrace_out_t *libtrace)
 	printf("%s() \n", __func__);
 
 	//wandio_wcreate() called inside
-	OUTPUT->file = trace_open_file_out(libtrace, 
-						OUTPUT->compress_type,
-						OUTPUT->level,
-						OUTPUT->fileflag);
-	if (!OUTPUT->file) 
+	OUTPUT->file = trace_open_file_out(libtrace, OUTPUT->compress_type, OUTPUT->level, OUTPUT->fileflag);
+	if (!OUTPUT->file)
 	{
 		printf("<error> can't open out file with wandio\n");
 		return -1;
@@ -832,12 +838,10 @@ static int kafka_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 }
 
 //need to get struct per_stream from thread and use its pointers
-static int kafka_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t UNUSED)
+static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 {
 	int numbytes;
-#if 0
-	odp_per_stream_t *stream = t->format_data;
-#endif
+	kafka_per_stream_t *stream = t->format_data;
 
 	while (1) 
 	{
@@ -852,6 +856,11 @@ static int kafka_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t UN
 		if (!rkmessage) /* timeout */
 			continue;
 
+		//copy received packet to internally allocated ram
+		stream->pkt = malloc(rkmessage->len);
+		memcpy(stream->pkt, rkmessage->payload, rkmessage->len);
+		stream->pkt_len = rkmessage->len;
+
 		numbytes = rkmessage->len;
 		debug("msg received with len: %d \n", numbytes);
 
@@ -860,12 +869,14 @@ static int kafka_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t UN
 		/* Return message to rdkafka */
 		rd_kafka_message_destroy(rkmessage);
 
-#if 0
-                /* Use schedule to get buf from any input queue. 
-		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
-		//debug("%s() - waiting for packet!\n", __func__);
-                ev = odp_schedule(NULL, ODP_SCHED_NO_WAIT); //no wait here
-#endif
+		if (rkmessage->len == 0)
+			continue;
+		else
+		{
+			stream->pkts_read++;
+			debug("thread: #%d, packet is %d bytes, total packets: %u\n",
+				 t->perpkt_num, numbytes, stream->pkts_read);
+		}
 
 		//if we got Ctrl-C from one of our utilities, etc
 		if (libtrace_halt)
@@ -921,13 +932,14 @@ static int kafka_pread_pack(libtrace_t *libtrace UNUSED, libtrace_thread_t *t UN
  * @return The number of packets read, or 0 in the case of EOF or -1 in error or -2 to represent
  * interrupted due to message waiting before packets had been read.
  */
+//we mostly read 10 packets in loop and then exit, this is how actually function works
 static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
 {
 	int pkts_read = 0;
 	int numbytes = 0;
 	uint32_t flags = 0;
 	unsigned int i;
-	odp_per_stream_t *stream = t->format_data;
+	kafka_per_stream_t *stream = t->format_data;
 
 	debug("%s() \n", __func__);
 
@@ -969,7 +981,7 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 		{
 			packets[i]->buffer = stream->pkt; 
 			packets[i]->capture_length = stream->pkt_len;
-			packets[i]->payload = stream->l2h; 
+			packets[i]->payload = packets[i]->buffer; 
 			packets[i]->wire_length = stream->pkt_len + WIRELEN_DROPLEN;
 			packets[i]->trace = trace;
 			packets[i]->error = 1;
@@ -1191,7 +1203,6 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 			t, t->type, t->tid, t->perpkt_num);
 	}
 
-
 	return rv;	
 }
 
@@ -1263,7 +1274,7 @@ static struct libtrace_format_t kafka = {
         lodp_help,                     	/* help */
         NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */
-	lodp_pstart_input,              /* pstart_input */
+	kafka_pstart_input,              /* pstart_input */
 	kafka_pread_packets,             /* pread_packets */
 	lodp_pause_input,               /* ppause */
 	kafka_fin_input,                 /* p_fin */

@@ -442,6 +442,8 @@ int main(int argc, char *argv[])
 		compress_type = TRACE_OPTION_COMPRESSTYPE_LZMA;
 	} else if (strncmp(compress_type_str, "no", 2) == 0) {
 		compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
+	} else if (strncmp(compress_type_str, "hwgz", 4) == 0) {
+		compress_type = TRACE_OPTION_COMPRESSTYPE_HWZLIB;
 	} else {
 		fprintf(stderr, "Unknown compression type: %s\n",
 			compress_type_str);

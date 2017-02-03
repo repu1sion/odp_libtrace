@@ -432,7 +432,7 @@ int main(int argc, char *argv[])
 	/* I decided to be fairly generous in what I accept for the
 	 * compression type string */
 	else if (strncmp(compress_type_str, "gz", 2) == 0 ||
-			strncmp(compress_type_str, "zlib", 4) == 0) {
+		 strncmp(compress_type_str, "zlib", 4) == 0) {
 		compress_type = TRACE_OPTION_COMPRESSTYPE_ZLIB;
 	} else if (strncmp(compress_type_str, "bz", 2) == 0) {
 		compress_type = TRACE_OPTION_COMPRESSTYPE_BZ2;
@@ -444,7 +444,22 @@ int main(int argc, char *argv[])
 		compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	} else if (strncmp(compress_type_str, "hwgz", 4) == 0) {
 		compress_type = TRACE_OPTION_COMPRESSTYPE_HWZLIB;
-	} else {
+	} else if (strncmp(compress_type_str, "blosc:", 6) == 0) 
+		{
+			if (!strncmp(compress_type_str+6, "blosclz", 7))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_BLOSCLZ;
+			else if (!strncmp(compress_type_str+6, "lz4hc", 5))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_LZ4HC;
+			else if (!strncmp(compress_type_str+6, "lz4", 3))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_LZ4;
+			else if (!strncmp(compress_type_str+6, "snappy", 6))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_SNAPPY;
+			else if (!strncmp(compress_type_str+6, "zlib", 4))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_ZLIB;
+			else if (!strncmp(compress_type_str+6, "zstd", 4))
+				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_ZSTD;
+		}
+	else {
 		fprintf(stderr, "Unknown compression type: %s\n",
 			compress_type_str);
 		return 1;

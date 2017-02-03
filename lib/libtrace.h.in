@@ -1360,16 +1360,30 @@ DLLEXPORT int trace_set_meta_freq(libtrace_t *trace, int freq);
 DLLEXPORT int trace_set_event_realtime(libtrace_t *trace, bool realtime);
 
 /** Valid compression types 
- * Note, this must be kept in sync with WANDIO_COMPRESS_* numbers in wandio.h
+ * Note, this must be kept in sync with TRACE_OPTION_COMPRESSTYPE_* numbers in wandio.h
  */ 
 typedef enum {
-	TRACE_OPTION_COMPRESSTYPE_NONE = 0, /**< No compression */
-	TRACE_OPTION_COMPRESSTYPE_ZLIB = 1, /**< GZip Compression */
-	TRACE_OPTION_COMPRESSTYPE_BZ2  = 2, /**< BZip2 Compression */
-	TRACE_OPTION_COMPRESSTYPE_LZO  = 3,  /**< LZO Compression */
-	TRACE_OPTION_COMPRESSTYPE_LZMA  = 4,  /**< LZO Compression */
-	TRACE_OPTION_COMPRESSTYPE_HWZLIB  = 5,  /**< HWZLIB Compression */
-        TRACE_OPTION_COMPRESSTYPE_LAST
+        /** No compression */
+        TRACE_OPTION_COMPRESSTYPE_NONE    = 0,
+        /** Zlib compression */
+        TRACE_OPTION_COMPRESSTYPE_ZLIB    = 1,
+        /** Bzip compression */
+        TRACE_OPTION_COMPRESSTYPE_BZ2     = 2,
+        /** LZO compression */
+        TRACE_OPTION_COMPRESSTYPE_LZO     = 3,
+        /** LZMA compression */
+        TRACE_OPTION_COMPRESSTYPE_LZMA    = 4,
+        /** HWZLIB compression */
+        TRACE_OPTION_COMPRESSTYPE_HWZLIB  = 5,
+        // BLOSC TYPES OF COMPRESSION       
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_BLOSCLZ   = 6,
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_LZ4       = 7,
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_LZ4HC     = 8,
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_SNAPPY    = 9,
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_ZLIB      = 10,
+        TRACE_OPTION_COMPRESSTYPE_BLOSC_ZSTD      = 11,
+        /** All supported methods - used as a bitmask */
+        TRACE_OPTION_COMPRESSTYPE_LAST    = 15         
 } trace_option_compresstype_t;
 
 /** Valid configuration options for output traces */

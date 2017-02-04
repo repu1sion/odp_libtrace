@@ -1,5 +1,3 @@
-// format kafka support
-
 #include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
@@ -15,15 +13,9 @@
 #include "rt_protocol.h"
 
 #include <odp_api.h>
-//#include <odp/helper/linux.h>
-//#include <odp/helper/eth.h>
-//#include <odp/helper/ip.h>
 
 #include <librdkafka/rdkafka.h>
 #include <syslog.h>
-
-#define SHM_PKT_POOL_SIZE      (512*2048)
-#define SHM_PKT_POOL_BUF_SIZE  1856
 
 #define FORMAT(x) ((struct kafka_format_data_t *)x->format_data)
 #define DATAOUT(x) ((struct kafka_format_data_out_t *)x->format_data)
@@ -42,48 +34,47 @@
  #define debug(x...)
 #endif
 
-struct kafka_format_data_t {
+struct kafka_format_data_t 
+{
 	//kafka vars
 	rd_kafka_t *rk;
         rd_kafka_conf_t *conf;                  //main conf object
         rd_kafka_topic_t *rkt;                  //topic object
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
-        char topic[20];                   	//our custom topic
-        char brokers[30];
+        char topic[50];                   	//our custom topic
+        char brokers[100];
         char errstr[512];
 	//other vars
 	void *pkt;			//store received packet here
-	odp_instance_t odp_instance;
+	int pkt_len;			//length of current packet
 	int pvt;			//for private data saving
 	unsigned int pkts_read;
-	odp_pktio_t pktio;
-	//odp_packet_t pkt;		//ptr for current packet which we pass to prepare_packet()
-	int pkt_len;			//length of current packet
 	u_char *l2h;			//l2 header for current packet
-	/* Our parallel streams */
 	libtrace_list_t *per_stream;	//pointer to the whole list structure: head, tail, size etc inside.
 };
 
-struct kafka_format_data_out_t {
+struct kafka_format_data_out_t 
+{
 	//kafka vars
 	rd_kafka_t *rk;
         rd_kafka_conf_t *conf;                  //main conf object
         rd_kafka_topic_t *rkt;                  //topic object
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
-        char topic[20];                   	//our custom topic
-        char brokers[30];
+        char topic[50];                   	//our custom topic
+        char brokers[100];
         char errstr[512];
 	//other vars
 	char *path;
 	int level;
-	int compress_type;
+	int compress_type;			//store compression type here: bz2, gz etc
 	int fileflag;
 	iow_t *file;
 };
 
-typedef struct kafka_per_stream_s {
+typedef struct kafka_per_stream_s 
+{
 	int id;
 	int core;
 	void *pkt;			//store received packet here
@@ -92,41 +83,7 @@ typedef struct kafka_per_stream_s {
 	unsigned int pkts_read;
 } kafka_per_stream_t;
 
-
-// A structure describing the location of a PCI device (from rte_pci.h)
-struct rte_pci_addr {
-        uint16_t domain;                /**< Device domain */
-        uint8_t bus;                    /**< Device bus */
-        uint8_t devid;                  /**< Device ID */
-        uint8_t function;               /**< Device function. */
-};
-
-/**
- * Parse the URI format as a pci address
- * Fills in addr, note core is optional and is unchanged if
- * a value for it is not provided.
- *
- * i.e. ./libtrace dpdk:0:1:0.0 -> 0:1:0.0
- * or ./libtrace dpdk:0:1:0.1-2 -> 0:1:0.1 (Using CPU core #2)
- */
-//example - odp:0000:03:00.0
-#if 0
-static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core) 
-{
-	int matches;
-	assert(str);
-	//str used as input. looking for 0000:03:00.0-0 in it and set addr and core
-	matches = sscanf(str, "%4"SCNx16":%2"SCNx8":%2"SCNx8".%2"SCNx8"-%ld",
-	                 &addr->domain, &addr->bus, &addr->devid,
-	                 &addr->function, core);
-	if (matches >= 4) {
-		return 0;
-	} else {
-		return -1;
-	}
-}
-#endif
-
+//legacy func called on every message. consuming code could be added here
 static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
 {
 	printf("len: %d , payload: %s\n", (int)rkmessage->len, (char *)rkmessage->payload);
@@ -1016,7 +973,6 @@ static void kafka_fin_packet(libtrace_packet_t *packet)
 		packet->buffer = NULL;
 	}
 }
-
 
 static int kafka_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 

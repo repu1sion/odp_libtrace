@@ -458,6 +458,11 @@ int main(int argc, char *argv[])
 				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_ZLIB;
 			else if (!strncmp(compress_type_str+6, "zstd", 4))
 				compress_type = TRACE_OPTION_COMPRESSTYPE_BLOSC_ZSTD;
+			else {
+				fprintf(stderr, "Unknown blosc compression type: %s\n",
+					compress_type_str);
+				return 1;
+			}
 		}
 	else {
 		fprintf(stderr, "Unknown compression type: %s\n",

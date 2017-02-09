@@ -7,12 +7,12 @@ NC='\033[0m' # No Color
 TIMESTART=$(date +%s)
 TIMEEND=$(($TIMESTART+20))
 
-OUTFILE=erf:trace.erf.gz
+OUTFILE=erf:trace.gz
 
 echo "time to start: $TIMESTART, time to end: $TIMEEND"
 
 #sudo tracesplit -s $TIMESTART -e $TIMEEND int:eth0 erf:trace.erf.gz &
-sudo tracesplit -s $TIMESTART -e $TIMEEND odp:"03:00.0" $OUTFILE
+sudo tracesplit -z 1 -Z gzip -s $TIMESTART -e $TIMEEND odp:"03:00.0" $OUTFILE
 echo -e "${white}collecting is over. now time is : $(date +%s) output: $OUTFILE ${NC}"
 echo "done"
 

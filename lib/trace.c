@@ -1103,6 +1103,7 @@ DLLEXPORT void *trace_get_link(const libtrace_packet_t *packet) {
  * past 1970-01-01, the lower 32bits are partial seconds)
  */ 
 DLLEXPORT uint64_t trace_get_erf_timestamp(const libtrace_packet_t *packet) {
+#if 0
 printf("1. packet: %p\n", packet);
 printf("1. packet->header: %p\n", packet->header);
 printf("1. packet->payload: %p\n", packet->payload);
@@ -1113,26 +1114,23 @@ printf("1. packet->wire_length: %d\n", packet->wire_length);
 printf("1. packet->payload_length: %d\n", packet->payload_length);
 printf("2. packet->trace: %p\n", packet->trace);
 printf("3. packet->trace->format: %p\n", packet->trace->format);
+#endif
 	if (packet->trace->format->get_erf_timestamp) {
-printf("2\n");
 		/* timestamp -> timestamp */
 		return packet->trace->format->get_erf_timestamp(packet);
 	} else if (packet->trace->format->get_timespec) {
-printf("3\n");
 		/* timespec -> timestamp */
 		struct timespec ts;
 		ts = packet->trace->format->get_timespec(packet);
 		return ((((uint64_t)ts.tv_sec) << 32) +
 				(((uint64_t)ts.tv_nsec << 32)/1000000000));
 	} else if (packet->trace->format->get_timeval) {
-printf("4\n");
 		/* timeval -> timestamp */
 		struct timeval tv;
 		tv = packet->trace->format->get_timeval(packet);
 		return ((((uint64_t)tv.tv_sec) << 32) +
 				(((uint64_t)tv.tv_usec << 32)/1000000));
 	} else if (packet->trace->format->get_seconds) {
-printf("5\n");
 		/* seconds -> timestamp */
 		double seconds = packet->trace->format->get_seconds(packet);
 		return (((uint64_t)seconds)<<32)

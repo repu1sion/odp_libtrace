@@ -32,8 +32,8 @@
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-#define DEBUG
-#define OPTION_PRINT_PACKETS
+//#define DEBUG
+//#define OPTION_PRINT_PACKETS
 
 #ifdef DEBUG
  #define debug(x...) printf(x)
@@ -984,6 +984,7 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
 {
 	libtrace=libtrace;
+	t = t;
 
 	debug("%s() \n", __func__);
 

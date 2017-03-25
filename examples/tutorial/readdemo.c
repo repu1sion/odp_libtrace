@@ -7,12 +7,13 @@
 #include <err.h>
 #include <assert.h>
 
-uint64_t count = 0;
+int count = 0;
 
 
 static void per_packet(libtrace_packet_t *packet)
 {
 	assert(packet);
+	printf("packet received!\n");
 	/* This function turns out to be really simple, because we are just
 	 * counting the number of packets in the trace */
 	count += 1;
@@ -85,9 +86,11 @@ int main(int argc, char *argv[])
 	 * Remember, EOF will return 0 so we only want to continue looping
 	 * as long as the return value is greater than zero
 	 */
+	printf("starting to read packets\n");
 	while (trace_read_packet(trace,packet)>0) {
 		/* Call our per_packet function for every packet */
 		per_packet(packet);
+		printf("Packet Count = %d \n", count);
 	}
 
 	/* If the trace is in an error state, then we know that we fell out of
@@ -104,7 +107,7 @@ int main(int argc, char *argv[])
 	/* We've reached the end of our trace without an error so we can
 	 * print our final count. Note the use of the PRIu64 format which is
 	 * portable across 64 and 32 bit machines */
-	printf("Packet Count = %" PRIu64 "\n", count);
+	printf("Packet Count = %d \n", count);
 	
 	libtrace_cleanup(trace, packet);
 

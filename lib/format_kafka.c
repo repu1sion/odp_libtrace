@@ -23,6 +23,12 @@
 
 #define WIRELEN_DROPLEN 4
 
+#define TOPIC_LEN 256
+#define BROKERS_LEN 256
+#define ERR_LEN 512
+#define KAFKA_TOPIC "kafkatrace"
+#define KAFKA_BROKER "localhost:9092"
+
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
 #define DEBUG
@@ -42,16 +48,16 @@ struct kafka_format_data_t
         rd_kafka_topic_t *rkt;                  //topic object
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
-        char topic[50];                   	//our custom topic
-        char brokers[100];
-        char errstr[512];
+        char topic[TOPIC_LEN];			//our specific topic name
+        char brokers[BROKERS_LEN];
+        char errstr[ERR_LEN];
 	//other vars
-	void *pkt;			//store received packet here
-	int pkt_len;			//length of current packet
-	int pvt;			//for private data saving
+	void *pkt;				//store received packet here
+	int pkt_len;				//length of current packet
+	int pvt;				//for private data saving
 	unsigned int pkts_read;
-	u_char *l2h;			//l2 header for current packet
-	libtrace_list_t *per_stream;	//pointer to the whole list structure: head, tail, size etc inside.
+	u_char *l2h;				//l2 header for current packet
+	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
 };
 
 struct kafka_format_data_out_t 
@@ -62,9 +68,9 @@ struct kafka_format_data_out_t
         rd_kafka_topic_t *rkt;                  //topic object
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
-        char topic[50];                   	//our custom topic
-        char brokers[100];
-        char errstr[512];
+        char topic[TOPIC_LEN];			//our specific topic name
+        char brokers[BROKERS_LEN];
+        char errstr[ERR_LEN];
 	//other vars
 	char *path;
 	int level;
@@ -77,7 +83,7 @@ typedef struct kafka_per_stream_s
 {
 	int id;
 	int core;
-	void *pkt;			//store received packet here
+	void *pkt;				//store received packet here
 	int pkt_len;
 	u_char *l2h;
 	unsigned int pkts_read;
@@ -276,8 +282,8 @@ static int kafka_init_input(libtrace_t *libtrace)
 
 	//init kafka
 	FORMAT(libtrace)->partition = 0;
-	strcpy(FORMAT(libtrace)->topic, "test");
-	strcpy(FORMAT(libtrace)->brokers, "localhost:9092");
+	strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
+	strcpy(FORMAT(libtrace)->brokers, KAFKA_BROKER);
 	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
 
 	FORMAT(libtrace)->conf = rd_kafka_conf_new();
@@ -317,7 +323,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 /*
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
-		trace_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
+race_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
 		free(libtrace->format_data);
 		libtrace->format_data = NULL;
 		return -1;
@@ -341,8 +347,8 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 
 	//init kafka
 	OUTPUT->partition = RD_KAFKA_PARTITION_UA;
-	strcpy(OUTPUT->topic, "test");
-	strcpy(OUTPUT->brokers, "localhost:9092");
+	strcpy(OUTPUT->topic, KAFKA_TOPIC);
+	strcpy(OUTPUT->brokers, KAFKA_BROKER);
 	memset(OUTPUT->errstr, 0x0, sizeof(OUTPUT->errstr));
 
         //----- kafka configuration -----

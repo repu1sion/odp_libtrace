@@ -23,11 +23,17 @@
 
 #define WIRELEN_DROPLEN 4
 
-#define TOPIC_LEN 256
+#define TOPIC_LEN 512
+#define HOSTNAME_LEN 256
 #define BROKERS_LEN 256
 #define ERR_LEN 512
+
+//----- KAFKA CONFIG -----
 #define KAFKA_TOPIC "kafkatrace"
 #define KAFKA_BROKER "localhost:9092"
+#define KAFKA_COMPRESSION "snappy"	//could be also "gzip" or "lz4"
+#define KAFKA_BATCH_MSGS "100"		//batch of msgs to send
+#define KAFKA_BUFFERING_MS "100"	//ms of waiting till we get full batch of msgs
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
@@ -88,6 +94,36 @@ typedef struct kafka_per_stream_s
 	u_char *l2h;
 	unsigned int pkts_read;
 } kafka_per_stream_t;
+
+//get hostname
+static char* kafka_hostname()
+{
+	int rv;
+	int done = 0;
+	char hname[HOSTNAME_LEN] = {0};
+	static char topic[TOPIC_LEN] = "capture.";
+	const char *h = "nohostname";
+
+	//executing just once
+	if (!done)
+	{
+		rv = gethostname(hname, HOSTNAME_LEN);
+		if (rv)
+		{
+			printf("error getting hostname\n");
+			strcpy(hname, h);	//if we failed to get hostname - return default one
+		}
+		else
+		{
+			debug("got hostname successfully: %s \n", hname);
+		}
+		strcat(topic, hname);
+		done = 1;
+		debug("full hostname: %s \n", topic);
+	}
+
+	return topic;
+}
 
 //legacy func called on every message. consuming code could be added here
 static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
@@ -282,15 +318,18 @@ static int kafka_init_input(libtrace_t *libtrace)
 
 	//init kafka
 	FORMAT(libtrace)->partition = 0;
-	strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
+	//strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
+	strcpy(FORMAT(libtrace)->topic, kafka_hostname());
 	strcpy(FORMAT(libtrace)->brokers, KAFKA_BROKER);
 	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
 
 	FORMAT(libtrace)->conf = rd_kafka_conf_new();
-        rd_kafka_conf_set(FORMAT(libtrace)->conf, "compression.codec", "snappy",
+        rd_kafka_conf_set(FORMAT(libtrace)->conf, "compression.codec", KAFKA_COMPRESSION,
 		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
         //the min numb of messages to wait for to accumulate before sending
-        rd_kafka_conf_set(FORMAT(libtrace)->conf, "batch.num.messages", "100",
+        rd_kafka_conf_set(FORMAT(libtrace)->conf, "batch.num.messages", KAFKA_BATCH_MSGS,
+		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
+        rd_kafka_conf_set(FORMAT(libtrace)->conf, "queue.buffering.max.ms", KAFKA_BUFFERING_MS,
 		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
 
         //topic configuration
@@ -337,8 +376,6 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 {
 	printf("%s() \n", __func__);
 
-        fprintf(stderr, "Init output!()\n");
-
 	libtrace->format_data = malloc(sizeof(struct kafka_format_data_out_t));
 	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
@@ -346,16 +383,21 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 
 	//init kafka
-	OUTPUT->partition = RD_KAFKA_PARTITION_UA;
-	strcpy(OUTPUT->topic, KAFKA_TOPIC);
+	/* The unassigned partition is used by the producer API for messages
+	 * that should be partitioned using the configured or default partitioner.*/
+	OUTPUT->partition = RD_KAFKA_PARTITION_UA;	//it is -1
+	strcpy(OUTPUT->topic, kafka_hostname());
+	//strcpy(OUTPUT->topic, KAFKA_TOPIC);
 	strcpy(OUTPUT->brokers, KAFKA_BROKER);
 	memset(OUTPUT->errstr, 0x0, sizeof(OUTPUT->errstr));
 
         //----- kafka configuration -----
+	//default settings, batch.num.messages=10000 and queue.buffering.max.ms=1000
+        //'batch.num.messages' - the min numb of messages to wait for to accumulate before sending
         OUTPUT->conf = rd_kafka_conf_new();
-        rd_kafka_conf_set(OUTPUT->conf, "compression.codec", "snappy", OUTPUT->errstr, sizeof(OUTPUT->errstr));
-        //the min numb of messages to wait for to accumulate before sending
-        rd_kafka_conf_set(OUTPUT->conf, "batch.num.messages", "100", OUTPUT->errstr, sizeof(OUTPUT->errstr));
+        rd_kafka_conf_set(OUTPUT->conf, "compression.codec", KAFKA_COMPRESSION, OUTPUT->errstr, sizeof(OUTPUT->errstr));
+        rd_kafka_conf_set(OUTPUT->conf, "batch.num.messages", KAFKA_BATCH_MSGS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
+        rd_kafka_conf_set(OUTPUT->conf, "queue.buffering.max.ms", KAFKA_BUFFERING_MS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
 
         //topic configuration
         OUTPUT->topic_conf = rd_kafka_topic_conf_new();
@@ -1194,7 +1236,7 @@ static void lodp_help(void)
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
 static struct libtrace_format_t kafka = {
-        "kafka",				/* name used in URI to identify capture format - odp:iface */
+        "kafka",			/* name used in URI to identify capture format - odp:iface */
         "$Id$",				/* version of this module */
         TRACE_FORMAT_KAFKA,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/

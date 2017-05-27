@@ -25,11 +25,11 @@
 
 #define TOPIC_LEN 512
 #define HOSTNAME_LEN 256
-#define BROKERS_LEN 256
+#define BROKER_LEN 512
 #define ERR_LEN 512
 
 //----- KAFKA CONFIG -----
-#define KAFKA_TOPIC "kafkatrace"
+//#define KAFKA_TOPIC "kafkatrace"	//not used anymore
 #define KAFKA_BROKER "localhost:9092"
 #define KAFKA_COMPRESSION "snappy"	//could be also "gzip" or "lz4"
 #define KAFKA_BATCH_MSGS "100"		//batch of msgs to send
@@ -55,7 +55,7 @@ struct kafka_format_data_t
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
         char topic[TOPIC_LEN];			//our specific topic name
-        char brokers[BROKERS_LEN];
+        char brokers[BROKER_LEN];
         char errstr[ERR_LEN];
 	//other vars
 	void *pkt;				//store received packet here
@@ -75,7 +75,7 @@ struct kafka_format_data_out_t
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
         int partition;
         char topic[TOPIC_LEN];			//our specific topic name
-        char brokers[BROKERS_LEN];
+        char brokers[BROKER_LEN];
         char errstr[ERR_LEN];
 	//other vars
 	char *path;
@@ -123,6 +123,30 @@ static char* kafka_hostname()
 	}
 
 	return topic;
+}
+
+//get env variable KAFKA_BROKER. if no such - use default value from define	
+static char* kafka_broker()
+{
+	char *env;
+	static char broker[BROKER_LEN] = {0};
+
+	env = getenv("KAFKA_BROKER");
+        if (env)
+	{
+        	debug("our env var is: [%s]\n", env);
+		memset(broker, 0x0, BROKER_LEN);
+		strcpy(broker, env);
+	}
+	else
+	{
+		memset(broker, 0x0, BROKER_LEN);
+		strcpy(broker, KAFKA_BROKER);
+		debug("no KAFKA_BROKER var found. default broker will be used\n");
+	}
+
+	debug("full broker address: %s \n", broker);
+	return broker;
 }
 
 //legacy func called on every message. consuming code could be added here
@@ -320,7 +344,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->partition = 0;
 	//strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
 	strcpy(FORMAT(libtrace)->topic, kafka_hostname());
-	strcpy(FORMAT(libtrace)->brokers, KAFKA_BROKER);
+	strcpy(FORMAT(libtrace)->brokers, kafka_broker());
 	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
 
 	FORMAT(libtrace)->conf = rd_kafka_conf_new();
@@ -388,7 +412,7 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 	OUTPUT->partition = RD_KAFKA_PARTITION_UA;	//it is -1
 	strcpy(OUTPUT->topic, kafka_hostname());
 	//strcpy(OUTPUT->topic, KAFKA_TOPIC);
-	strcpy(OUTPUT->brokers, KAFKA_BROKER);
+	strcpy(OUTPUT->brokers, kafka_broker());
 	memset(OUTPUT->errstr, 0x0, sizeof(OUTPUT->errstr));
 
         //----- kafka configuration -----
@@ -410,7 +434,7 @@ static int kafka_init_output(libtrace_out_t *libtrace)
                 exit(1);
         }
 
-        rd_kafka_set_log_level(OUTPUT->rk, LOG_DEBUG);//XXX - do we need it?
+        rd_kafka_set_log_level(OUTPUT->rk, LOG_DEBUG);
 
         //add brokers
         if (!rd_kafka_brokers_add(OUTPUT->rk, OUTPUT->brokers))
@@ -492,7 +516,7 @@ static int kafka_start_input(libtrace_t *libtrace)
                 (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
 #endif
 
-	/* Start consuming */
+	/* Start consuming */KAFKA_BROKER
 	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
 		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
 	{

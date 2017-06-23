@@ -177,8 +177,6 @@ static int kafka_init_consume(libtrace_t *libtrace)
 	rd_kafka_resp_err_t err;
 	int i;
 
-
-
 	FORMAT(libtrace)->topics = rd_kafka_topic_partition_list_new(KAFKA_MAX_TOPICS);
 
 	for (i = 0; i < KAFKA_MAX_TOPICS; i++)
@@ -430,7 +428,7 @@ static int kafka_init_input(libtrace_t *libtrace)
         //topic configuration
         FORMAT(libtrace)->topic_conf = rd_kafka_topic_conf_new();
 
-
+	//------------------------------ below is setup similar to librdkafka example --------------------
 	/* Consumer groups require a group id */
 	debug("setting group: %s \n", KAFKA_GROUP);
 	if (rd_kafka_conf_set(FORMAT(libtrace)->conf, "group.id", KAFKA_GROUP, FORMAT(libtrace)->errstr,
@@ -448,6 +446,16 @@ static int kafka_init_input(libtrace_t *libtrace)
 		exit(1);
 	}
 
+	/* Set default topic config for pattern-matched topics. */
+	rd_kafka_conf_set_default_topic_conf(FORMAT(libtrace)->conf, FORMAT(libtrace)->topic_conf);
+
+//let's don't use it yet, maybe we could live without it
+#if 0
+	/* Callback called on partition assignment changes */
+	rd_kafka_conf_set_rebalance_cb(conf, rebalance_cb);
+#endif
+	//-------------------------------------------------------------------------------------------------
+
         //----- create kafka handle -----
         FORMAT(libtrace)->rk = rd_kafka_new(RD_KAFKA_CONSUMER, FORMAT(libtrace)->conf, 
 		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
@@ -456,9 +464,6 @@ static int kafka_init_input(libtrace_t *libtrace)
                 fprintf(stderr, "%% Failed to create new producer: %s\n", FORMAT(libtrace)->errstr);
                 exit(1);
         }
-
-	/* Set default topic config for pattern-matched topics. */
-	rd_kafka_conf_set_default_topic_conf(FORMAT(libtrace)->conf, FORMAT(libtrace)->topic_conf);
 
         rd_kafka_set_log_level(FORMAT(libtrace)->rk, LOG_DEBUG);
 
@@ -472,13 +477,13 @@ static int kafka_init_input(libtrace_t *libtrace)
         //create topic
         //Topic handles are refcounted internally and calling rd_kafka_topic_new()
         //again with the same topic name will return the previous topic handle
-        //
 #if 0
         FORMAT(libtrace)->rkt = rd_kafka_topic_new(FORMAT(libtrace)->rk, 
 		FORMAT(libtrace)->topic, FORMAT(libtrace)->topic_conf);
         FORMAT(libtrace)->topic_conf = NULL; /* Now owned by topic */
 #endif
 
+        /* Redirect rd_kafka_poll() to consumer_poll() */
 	rd_kafka_poll_set_consumer(FORMAT(libtrace)->rk);
 
 	rv = kafka_init_consume(libtrace);
@@ -599,29 +604,10 @@ static int kafka_start_input(libtrace_t *libtrace)
 
 	debug("%s() \n", __func__);
 
-#if 0
-	if (libtrace->io) // io - the libtrace IO reader for this trace (if applicable)
-		return 0; //file already open
-	
-	libtrace->io = trace_open_file(libtrace);//Open a file for reading using the new Libtrace IO system (wandio_create)
-	if (!libtrace->io)
-	{
-                fprintf(stderr, "Error: trace_open_file() failed\n");
-		return -1;
-	}
-#endif
+
+
 
 #if 0
-	//start pktio
-        printf("going to start pktio\n");
-        ret = odp_pktio_start(FORMAT(libtrace)->pktio);
-        if (ret != 0)
-                fprintf(stderr, "Error: unable to start pktio\n");
-
-        printf("  created pktio:%02ld, queue mode\n default pktio%02ld-INPUT queue\n",
-                (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
-#endif
-
 	/* Start consuming */
 	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
 		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
@@ -640,6 +626,8 @@ static int kafka_start_input(libtrace_t *libtrace)
 	}
 	else
 		debug("start consuming from first topic\n");
+#endif
+
 
 	return ret;
 }
@@ -721,6 +709,8 @@ static int kafka_start_output(libtrace_out_t *libtrace)
 
 static int kafka_fin_input(libtrace_t *libtrace) 
 {
+        rd_kafka_resp_err_t err;
+
 	printf("%s() \n", __func__);
 
         //odp_pktio_stop(FORMAT(libtrace)->pktio);
@@ -732,6 +722,13 @@ static int kafka_fin_input(libtrace_t *libtrace)
 		wandio_destroy(libtrace->io);
 		printf("wandio destroyed\n");
 	}
+
+        err = rd_kafka_consumer_close(FORMAT(libtrace)->rk);
+        if (err)
+                fprintf(stderr, "%% Failed to close consumer: %s\n",
+                        rd_kafka_err2str(err));
+        else
+                fprintf(stderr, "%% Consumer closed\n");
 
 	libtrace_list_deinit(FORMAT(libtrace)->per_stream);
 	free(libtrace->format_data);
@@ -833,12 +830,17 @@ static int kafka_read_pack(libtrace_t *libtrace)
 	{
 		rd_kafka_message_t *rkmessage;
 		//rd_kafka_resp_err_t err;
-
+//old API style of poll
+#if 0
 		/* Poll for errors, etc. */
 		rd_kafka_poll(FORMAT(libtrace)->rk, 0);
 
 		/* Consume single message. See rdkafka_performance.c for high speed */
 		rkmessage = rd_kafka_consume(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition, 1000);
+#endif
+		//HighLevel API for poll. Will block for at most 1000 ms
+                rkmessage = rd_kafka_consumer_poll(FORMAT(libtrace)->rk, 1000);
+
 		if (!rkmessage) /* timeout */
 			continue;
 
@@ -848,7 +850,8 @@ static int kafka_read_pack(libtrace_t *libtrace)
 		FORMAT(libtrace)->pkt_len = rkmessage->len;
 		
 		numbytes = rkmessage->len;
-		debug("msg received with len: %d \n", numbytes);
+		debug("msg received from topic [%s] with len: %d \n", 
+			rd_kafka_topic_name(rkmessage->rkt) ,numbytes);
 
 		msg_consume(rkmessage, NULL);
 
@@ -857,8 +860,6 @@ static int kafka_read_pack(libtrace_t *libtrace)
 
 		if (rkmessage->len == 0)
 			continue;
-
-
 #if 0
                 /* Use schedule to get buf from any input queue. 
 		   Waits infinitely for a new event with ODP_SCHED_WAIT param. */
@@ -872,8 +873,6 @@ static int kafka_read_pack(libtrace_t *libtrace)
 			printf("[got halt]\n");
 			return READ_EOF;
 		}
-
-
 
 #if 0
                 FORMAT(libtrace)->pkt = odp_packet_from_event(ev);

@@ -31,6 +31,8 @@
 //----- KAFKA CONFIG -----
 //#define KAFKA_TOPIC "kafkatrace"	//not used anymore
 #define KAFKA_BROKER "localhost:9092"
+#define KAFKA_GROUP "kafkatracegroup"	//group name 
+#define KAFKA_MAX_TOPICS 3		//max number of topics to subscribe (only for input)
 #define KAFKA_COMPRESSION "snappy"	//could be also "gzip" or "lz4"
 #define KAFKA_BATCH_MSGS "100"		//batch of msgs to send
 #define KAFKA_BUFFERING_MS "100"	//ms of waiting till we get full batch of msgs
@@ -38,12 +40,19 @@
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
 #define DEBUG
+#define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
 #ifdef DEBUG
  #define debug(x...) printf(x)
 #else
  #define debug(x...)
+#endif
+
+#ifdef ERROR_DBG
+ #define error(x...) printf("[error] " x)
+#else
+ #define error(x...)
 #endif
 
 struct kafka_format_data_t 
@@ -53,6 +62,7 @@ struct kafka_format_data_t
         rd_kafka_conf_t *conf;                  //main conf object
         rd_kafka_topic_t *rkt;                  //topic object
         rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
+	rd_kafka_topic_partition_list_t *topics;//list of topics to subscribe as consumer
         int partition;
         char topic[TOPIC_LEN];			//our specific topic name
         char brokers[BROKER_LEN];
@@ -99,7 +109,7 @@ typedef struct kafka_per_stream_s
 static char* kafka_hostname()
 {
 	int rv;
-	int done = 0;
+	static int done = 0;
 	char hname[HOSTNAME_LEN] = {0};
 	static char topic[TOPIC_LEN] = "capture.";
 	const char *h = "nohostname";
@@ -107,6 +117,7 @@ static char* kafka_hostname()
 	//executing just once
 	if (!done)
 	{
+		done = 1;
 		rv = gethostname(hname, HOSTNAME_LEN);
 		if (rv)
 		{
@@ -118,8 +129,7 @@ static char* kafka_hostname()
 			debug("got hostname successfully: %s \n", hname);
 		}
 		strcat(topic, hname);
-		done = 1;
-		debug("full hostname: %s \n", topic);
+		debug("full topicname: %s \n", topic);
 	}
 
 	return topic;
@@ -153,6 +163,64 @@ static char* kafka_broker()
 static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
 {
 	printf("len: %d , payload: %s\n", (int)rkmessage->len, (char *)rkmessage->payload);
+}
+
+
+//1. read env variables. 2. create topics-partitions. 3. subscribe
+//returns num of found topics in env vars and registered successfully
+static int kafka_init_consume(libtrace_t *libtrace)
+{
+	int numtopics = 0;
+	char *env;
+	char topicname[50] = {0};
+	char digit[10] = {0};
+	rd_kafka_resp_err_t err;
+	int i;
+
+
+
+	FORMAT(libtrace)->topics = rd_kafka_topic_partition_list_new(KAFKA_MAX_TOPICS);
+
+	for (i = 0; i < KAFKA_MAX_TOPICS; i++)
+	{
+		memset(topicname, 0x0, 50);
+		strcpy(topicname, "KAFKA_CONSUME_TOPIC");
+		sprintf(digit, "%d", i+1);
+		strcat(topicname, digit);
+		debug("looking for env variable %s to read topic name \n", topicname);
+		env = getenv(topicname);
+		if (env)
+		{
+			debug("#%d topic name is: [%s]\n", i+1, env);
+			if (rd_kafka_topic_partition_list_add(FORMAT(libtrace)->topics, env,
+								 FORMAT(libtrace)->partition))
+			{
+				numtopics++;
+				debug("topic+partition added successfully\n");
+			}
+			else
+			{
+				error("failed to add topic+partition\n");
+				continue;
+			}
+			
+		}
+		else
+		{
+			debug("no var found. default topic will be used\n");
+		}
+
+	}
+
+	if (numtopics)	//we need at least one topic found
+	{
+		err = rd_kafka_subscribe(FORMAT(libtrace)->rk, FORMAT(libtrace)->topics);
+		if (err)
+                        error("Failed to start consuming topics: %s\n", rd_kafka_err2str(err));
+	}
+
+
+	return numtopics;
 }
 
 #if 0
@@ -326,6 +394,8 @@ static int lodp_init_environment(char *uridata, struct kafka_format_data_t *form
    @param libtrace 	The input trace to be initialised */
 static int kafka_init_input(libtrace_t *libtrace) 
 {
+	int rv;
+
 	printf("%s() \n", __func__);
 
 	kafka_per_stream_t stream;
@@ -344,6 +414,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 	FORMAT(libtrace)->partition = 0;
 	//strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
 	strcpy(FORMAT(libtrace)->topic, kafka_hostname());
+
 	strcpy(FORMAT(libtrace)->brokers, kafka_broker());
 	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
 
@@ -359,6 +430,24 @@ static int kafka_init_input(libtrace_t *libtrace)
         //topic configuration
         FORMAT(libtrace)->topic_conf = rd_kafka_topic_conf_new();
 
+
+	/* Consumer groups require a group id */
+	debug("setting group: %s \n", KAFKA_GROUP);
+	if (rd_kafka_conf_set(FORMAT(libtrace)->conf, "group.id", KAFKA_GROUP, FORMAT(libtrace)->errstr,
+		sizeof(FORMAT(libtrace)->errstr)) != RD_KAFKA_CONF_OK)
+	{
+		fprintf(stderr, "%% %s\n", FORMAT(libtrace)->errstr);
+		exit(1);
+	}
+
+	/* Consumer groups always use broker based offset storage */
+	if (rd_kafka_topic_conf_set(FORMAT(libtrace)->topic_conf, "offset.store.method", "broker",
+		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr)) != RD_KAFKA_CONF_OK) 
+	{
+		fprintf(stderr, "%% %s\n", FORMAT(libtrace)->errstr);
+		exit(1);
+	}
+
         //----- create kafka handle -----
         FORMAT(libtrace)->rk = rd_kafka_new(RD_KAFKA_CONSUMER, FORMAT(libtrace)->conf, 
 		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
@@ -367,6 +456,9 @@ static int kafka_init_input(libtrace_t *libtrace)
                 fprintf(stderr, "%% Failed to create new producer: %s\n", FORMAT(libtrace)->errstr);
                 exit(1);
         }
+
+	/* Set default topic config for pattern-matched topics. */
+	rd_kafka_conf_set_default_topic_conf(FORMAT(libtrace)->conf, FORMAT(libtrace)->topic_conf);
 
         rd_kafka_set_log_level(FORMAT(libtrace)->rk, LOG_DEBUG);
 
@@ -378,10 +470,24 @@ static int kafka_init_input(libtrace_t *libtrace)
         }
 
         //create topic
+        //Topic handles are refcounted internally and calling rd_kafka_topic_new()
+        //again with the same topic name will return the previous topic handle
+        //
+#if 0
         FORMAT(libtrace)->rkt = rd_kafka_topic_new(FORMAT(libtrace)->rk, 
 		FORMAT(libtrace)->topic, FORMAT(libtrace)->topic_conf);
         FORMAT(libtrace)->topic_conf = NULL; /* Now owned by topic */
+#endif
 
+	rd_kafka_poll_set_consumer(FORMAT(libtrace)->rk);
+
+	rv = kafka_init_consume(libtrace);
+	if (!rv)
+	{
+		debug("no topics found in env variables - will use default one \n");
+	}
+	else
+		debug("found and subscribed to %d topics \n", rv);
 
 /*
 	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
@@ -516,7 +622,7 @@ static int kafka_start_input(libtrace_t *libtrace)
                 (long)(FORMAT(libtrace)->pktio), (long)(FORMAT(libtrace)->pktio));
 #endif
 
-	/* Start consuming */KAFKA_BROKER
+	/* Start consuming */
 	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
 		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
 	{
@@ -532,6 +638,8 @@ static int kafka_start_input(libtrace_t *libtrace)
 		ret = -1;
 		return ret;
 	}
+	else
+		debug("start consuming from first topic\n");
 
 	return ret;
 }
@@ -627,6 +735,9 @@ static int kafka_fin_input(libtrace_t *libtrace)
 
 	libtrace_list_deinit(FORMAT(libtrace)->per_stream);
 	free(libtrace->format_data);
+
+	if(FORMAT(libtrace)->topics)
+		rd_kafka_topic_partition_list_destroy(FORMAT(libtrace)->topics);
 
 	return 0;
 }

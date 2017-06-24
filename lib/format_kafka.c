@@ -121,7 +121,7 @@ static char* kafka_hostname()
 		rv = gethostname(hname, HOSTNAME_LEN);
 		if (rv)
 		{
-			printf("error getting hostname\n");
+			error("error getting hostname\n");
 			strcpy(hname, h);	//if we failed to get hostname - return default one
 		}
 		else
@@ -162,9 +162,10 @@ static char* kafka_broker()
 //legacy func called on every message. consuming code could be added here
 static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
 {
-	printf("len: %d , payload: %s\n", (int)rkmessage->len, (char *)rkmessage->payload);
+	rd_kafka_message_t *msg = rkmessage;
+	msg = msg;
+	debug("len: %d , payload: %s\n", (int)msg->len, (char *)msg->payload);
 }
-
 
 //1. read env variables. 2. create topics-partitions. 3. subscribe
 //returns num of found topics in env vars and registered successfully
@@ -216,7 +217,6 @@ static int kafka_init_consume(libtrace_t *libtrace)
 		if (err)
                         error("Failed to start consuming topics: %s\n", rd_kafka_err2str(err));
 	}
-
 
 	return numtopics;
 }
@@ -394,7 +394,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 {
 	int rv;
 
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	kafka_per_stream_t stream;
 	memset(&stream, 0x0, sizeof(kafka_per_stream_t));
@@ -492,24 +492,17 @@ static int kafka_init_input(libtrace_t *libtrace)
 		debug("no topics found in env variables - will use default one \n");
 	}
 	else
-		debug("found and subscribed to %d topics \n", rv);
-
-/*
-	if (lodp_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
-race_set_err(libtrace, TRACE_ERR_INIT_FAILED, "%s", err);
-		free(libtrace->format_data);
-		libtrace->format_data = NULL;
-		return -1;
+		debug("found and subscribed to %d topics \n", rv);
 	}
-*/
+
 	return 0;
 }
 
 //Initialises an output trace using the capture format.
 static int kafka_init_output(libtrace_out_t *libtrace) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	libtrace->format_data = malloc(sizeof(struct kafka_format_data_out_t));
 	OUTPUT->file = NULL;
@@ -575,7 +568,7 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 
 static int kafka_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	if (!data)
 		return -1;
@@ -601,11 +594,9 @@ static int kafka_config_output(libtrace_out_t *libtrace, trace_option_output_t o
 static int kafka_start_input(libtrace_t *libtrace) 
 {
 	int ret = 0;
+	libtrace = libtrace;
 
 	debug("%s() \n", __func__);
-
-
-
 
 #if 0
 	/* Start consuming */
@@ -682,27 +673,27 @@ static int lodp_pause_input(libtrace_t * libtrace)
 {
 	(void)libtrace;
 
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
-	printf("fake function. instead of pausing input - do nothing \n");
+	debug("fake function. instead of pausing input - do nothing \n");
 
 	return 0;
 }
 
 static int kafka_start_output(libtrace_out_t *libtrace) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	//wandio_wcreate() called inside
 	OUTPUT->file = trace_open_file_out(libtrace, OUTPUT->compress_type, OUTPUT->level, OUTPUT->fileflag);
 	if (!OUTPUT->file)
 	{
-		printf("<error> can't open out file with wandio\n");
+		error("can't open out file with wandio\n");
 		return -1;
 	}
 	else
 	{
-		printf("opened out file with wandio successfully\n");
+		debug("opened out file with wandio successfully\n");
 	}
 	return 0;
 }
@@ -711,7 +702,7 @@ static int kafka_fin_input(libtrace_t *libtrace)
 {
         rd_kafka_resp_err_t err;
 
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
         //odp_pktio_stop(FORMAT(libtrace)->pktio);
         //odp_pktio_close(FORMAT(libtrace)->pktio);
@@ -720,7 +711,7 @@ static int kafka_fin_input(libtrace_t *libtrace)
 	if (libtrace->io)
 	{
 		wandio_destroy(libtrace->io);
-		printf("wandio destroyed\n");
+		debug("wandio destroyed\n");
 	}
 
         err = rd_kafka_consumer_close(FORMAT(libtrace)->rk);
@@ -741,7 +732,7 @@ static int kafka_fin_input(libtrace_t *libtrace)
 
 static int kafka_fin_output(libtrace_out_t *libtrace) 
 {
-	printf("%s() \n", __func__);
+	debug("%s() \n", __func__);
 
 	//STOP KAFKA AND FREE RESOURCES
         /* Poll to handle delivery reports */
@@ -1020,7 +1011,7 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 		//if we got Ctrl-C from one of our utilities, etc
 		if (libtrace_halt)
 		{
-			printf("[got halt]\n");
+			debug("[got halt]\n");
 			return READ_EOF;
 		}
 
@@ -1346,7 +1337,8 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 
 static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
 {
-	libtrace=libtrace;
+	libtrace = libtrace;
+	t = t;
 
 	debug("%s() \n", __func__);
 
@@ -1423,6 +1415,6 @@ static struct libtrace_format_t kafka = {
 
 void kafka_constructor(void) 
 {
-	printf("registering kafka struct with address: %p , init_output: %p\n", &kafka, kafka.init_output);
+	debug("registering kafka struct with address: %p , init_output: %p\n", &kafka, kafka.init_output);
 	register_format(&kafka);
 }

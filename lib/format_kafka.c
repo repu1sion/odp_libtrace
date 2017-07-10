@@ -39,7 +39,7 @@
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-#define DEBUG
+//#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -1166,7 +1166,7 @@ static int kafka_write_packet(libtrace_out_t *libtrace,
 		return numbytes;
 	}
 
-	fprintf(stderr, "# %% Sent %zd bytes to topic %s partition %i\n",
+	debug("# %% Sent %zd bytes to topic %s partition %i\n",
 		len, rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition);
 
 	/* Poll to handle delivery reports */

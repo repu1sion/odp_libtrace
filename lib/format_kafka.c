@@ -640,7 +640,7 @@ static int kafka_start_input(libtrace_t *libtrace)
 
 static int kafka_pstart_input(libtrace_t *libtrace) 
 {
-	int ret;
+	int ret = 0;
 	int i;
 	kafka_per_stream_t *stream;
 	kafka_per_stream_t empty_stream;
@@ -660,6 +660,7 @@ static int kafka_pstart_input(libtrace_t *libtrace)
 		stream->id = i;
 	}
 
+#if 0
 	/* Start consuming */
 	if (rd_kafka_consume_start(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition,
 		 /*start_offset*/ RD_KAFKA_OFFSET_BEGINNING) == -1)
@@ -676,8 +677,9 @@ static int kafka_pstart_input(libtrace_t *libtrace)
 		ret = -1;
 		return ret;
 	}
+#endif
 
-	return 0;
+	return ret;
 }
 	
 /* Pauses an input trace - this function should close or detach the file or 
@@ -993,11 +995,17 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 		rd_kafka_message_t *rkmessage;
 		//rd_kafka_resp_err_t err;
 
+#if 0
 		/* Poll for errors, etc. */
 		rd_kafka_poll(FORMAT(libtrace)->rk, 0);
 
 		/* Consume single message. See rdkafka_performance.c for high speed */
 		rkmessage = rd_kafka_consume(FORMAT(libtrace)->rkt, FORMAT(libtrace)->partition, 1000);
+#endif
+	
+		//HighLevel API for poll. Will block for at most 1000 ms
+                rkmessage = rd_kafka_consumer_poll(FORMAT(libtrace)->rk, 1000);
+
 		if (!rkmessage) /* timeout */
 			continue;
 
@@ -1007,7 +1015,8 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 		stream->pkt_len = rkmessage->len;
 
 		numbytes = rkmessage->len;
-		debug("msg received with len: %d \n", numbytes);
+		debug("msg received from topic [%s] with len: %d \n", 
+			rd_kafka_topic_name(rkmessage->rkt) ,numbytes);
 
 		msg_consume(rkmessage, NULL);
 

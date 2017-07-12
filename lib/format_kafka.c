@@ -167,7 +167,8 @@ static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED)
 	debug("len: %d , payload: %s\n", (int)msg->len, (char *)msg->payload);
 }
 
-//1. read env variables. 2. create topics-partitions. 3. subscribe
+//1. read env variables. 2. create topics-partitions. 3. if fail to get
+//topics from env variables - set default one capture.$hostname. 4. subscribe
 //returns num of found topics in env vars and registered successfully
 static int kafka_init_consume(libtrace_t *libtrace)
 {
@@ -206,12 +207,26 @@ static int kafka_init_consume(libtrace_t *libtrace)
 		}
 		else
 		{
-			debug("no var found. default topic will be used\n");
+			debug("no var found. \n");
 		}
 
 	}
+	
+	//if we didn't get any topics from env variables - we try to add default one: capture.$hostname
+	if (!numtopics)
+	{
+		if (rd_kafka_topic_partition_list_add(FORMAT(libtrace)->topics, kafka_hostname(),
+							FORMAT(libtrace)->partition))
+		{
+			debug("default topic+partition added successfully\n");
+			numtopics++;
+		}
+		else
+			error("failed to add topic+partition\n");
+	}
 
-	if (numtopics)	//we need at least one topic found
+	//we need at least one topic found to subscribe
+	if (numtopics)	
 	{
 		err = rd_kafka_subscribe(FORMAT(libtrace)->rk, FORMAT(libtrace)->topics);
 		if (err)
@@ -1166,7 +1181,7 @@ static int kafka_write_packet(libtrace_out_t *libtrace,
 		return numbytes;
 	}
 
-	debug("# %% Sent %zd bytes to topic %s partition %i\n",
+	debug("# %% Sent %zd bytes to topic [%s] partition [%i]\n",
 		len, rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition);
 
 	/* Poll to handle delivery reports */

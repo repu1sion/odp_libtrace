@@ -26,12 +26,13 @@
 #define TOPIC_LEN 512
 #define HOSTNAME_LEN 256
 #define BROKER_LEN 512
+#define GROUP_LEN 512
 #define ERR_LEN 512
 
 //----- KAFKA CONFIG -----
 //#define KAFKA_TOPIC "kafkatrace"	//not used anymore
 #define KAFKA_BROKER "localhost:9092"
-#define KAFKA_GROUP "kafkatracegroup"	//group name 
+//#define KAFKA_GROUP "kafkatracegroup"	//group name - not used anymore
 #define KAFKA_MAX_TOPICS 3		//max number of topics to subscribe (only for input)
 #define KAFKA_COMPRESSION "snappy"	//could be also "gzip" or "lz4"
 #define KAFKA_BATCH_MSGS "100"		//batch of msgs to send
@@ -157,6 +158,33 @@ static char* kafka_broker()
 
 	debug("full broker address: %s \n", broker);
 	return broker;
+}
+
+//get env variable KAFKA_GROUP . if no such - use default value group.$hostname	
+static char* kafka_group()
+{
+	char *env;
+	static char group[GROUP_LEN] = {0};
+	char hname[HOSTNAME_LEN] = {0};
+
+	env = getenv("KAFKA_GROUP");
+        if (env)
+	{
+        	debug("our KAFKA_GROUP env var is: [%s]\n", env);
+		memset(group, 0x0, GROUP_LEN);
+		strcpy(group, env);
+	}
+	else
+	{
+		memset(group, 0x0, GROUP_LEN);
+		strcpy(group, "group.");
+		gethostname(hname, HOSTNAME_LEN);
+		strcat(group, hname);
+		debug("no KAFKA_GROUP var found. default group will be used\n");
+	}
+
+	debug("group name: %s \n", group);
+	return group;
 }
 
 //legacy func called on every message. consuming code could be added here
@@ -445,8 +473,8 @@ static int kafka_init_input(libtrace_t *libtrace)
 
 	//------------------------------ below is setup similar to librdkafka example --------------------
 	/* Consumer groups require a group id */
-	debug("setting group: %s \n", KAFKA_GROUP);
-	if (rd_kafka_conf_set(FORMAT(libtrace)->conf, "group.id", KAFKA_GROUP, FORMAT(libtrace)->errstr,
+	debug("setting group\n");
+	if (rd_kafka_conf_set(FORMAT(libtrace)->conf, "group.id", kafka_group(), FORMAT(libtrace)->errstr,
 		sizeof(FORMAT(libtrace)->errstr)) != RD_KAFKA_CONF_OK)
 	{
 		fprintf(stderr, "%% %s\n", FORMAT(libtrace)->errstr);
@@ -721,10 +749,6 @@ static int kafka_fin_input(libtrace_t *libtrace)
 
 	debug("%s() \n", __func__);
 
-        //odp_pktio_stop(FORMAT(libtrace)->pktio);
-        //odp_pktio_close(FORMAT(libtrace)->pktio);
-	//printf("pktio stopped and closed \n");
-
 	if (libtrace->io)
 	{
 		wandio_destroy(libtrace->io);
@@ -739,10 +763,13 @@ static int kafka_fin_input(libtrace_t *libtrace)
                 fprintf(stderr, "%% Consumer closed\n");
 
 	libtrace_list_deinit(FORMAT(libtrace)->per_stream);
-	free(libtrace->format_data);
 
 	if(FORMAT(libtrace)->topics)
 		rd_kafka_topic_partition_list_destroy(FORMAT(libtrace)->topics);
+
+	free(libtrace->format_data);
+
+	debug("%s() exiting\n", __func__);
 
 	return 0;
 }

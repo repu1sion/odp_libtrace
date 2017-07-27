@@ -714,7 +714,7 @@ static int kafka_pstart_input(libtrace_t *libtrace)
    device that is being read from. 
    @return 0 if successful, -1 in the event of error
 */
-static int lodp_pause_input(libtrace_t * libtrace) 
+static int kafka_pause_input(libtrace_t * libtrace) 
 {
 	(void)libtrace;
 
@@ -760,14 +760,19 @@ static int kafka_fin_input(libtrace_t *libtrace)
                 fprintf(stderr, "%% Failed to close consumer: %s\n",
                         rd_kafka_err2str(err));
         else
-                fprintf(stderr, "%% Consumer closed\n");
+                fprintf(stderr, "%% kafka consumer closed\n");
 
-	libtrace_list_deinit(FORMAT(libtrace)->per_stream);
+	if (FORMAT(libtrace)->per_stream)
+		libtrace_list_deinit(FORMAT(libtrace)->per_stream);
 
 	if(FORMAT(libtrace)->topics)
 		rd_kafka_topic_partition_list_destroy(FORMAT(libtrace)->topics);
 
-	free(libtrace->format_data);
+	if (libtrace->format_data)
+	{
+		free(libtrace->format_data);
+		libtrace->format_data = NULL;
+	}
 
 	debug("%s() exiting\n", __func__);
 
@@ -1421,7 +1426,7 @@ static struct libtrace_format_t kafka = {
         kafka_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
         kafka_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
-        lodp_pause_input,               /* pause_input */
+        kafka_pause_input,               /* pause_input */
         kafka_init_output,               /* init_output - Initialises an output trace using the capture format. */
         kafka_config_output,             /* config_output */
         kafka_start_output,              /* start_output */
@@ -1457,7 +1462,7 @@ static struct libtrace_format_t kafka = {
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	kafka_pstart_input,              /* pstart_input */
 	kafka_pread_packets,             /* pread_packets */
-	lodp_pause_input,               /* ppause */
+	kafka_pause_input,               /* ppause */
 	kafka_fin_input,                 /* p_fin */
 	lodp_pregister_thread,          /* pregister_thread */
 	lodp_punregister_thread,        /* punregister_thread */

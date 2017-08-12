@@ -545,6 +545,8 @@ static int kafka_init_input(libtrace_t *libtrace)
 //Initialises an output trace using the capture format.
 static int kafka_init_output(libtrace_out_t *libtrace) 
 {
+	char *env;
+
 	debug("%s() \n", __func__);
 
 	libtrace->format_data = malloc(sizeof(struct kafka_format_data_out_t));
@@ -557,8 +559,19 @@ static int kafka_init_output(libtrace_out_t *libtrace)
 	/* The unassigned partition is used by the producer API for messages
 	 * that should be partitioned using the configured or default partitioner.*/
 	OUTPUT->partition = RD_KAFKA_PARTITION_UA;	//it is -1
+
+	//set default output topic: capture.$hostname
 	strcpy(OUTPUT->topic, kafka_hostname());
-	//strcpy(OUTPUT->topic, KAFKA_TOPIC);
+
+	//overwrite output topic from env variable if such is present
+        env = getenv("KAFKA_OUTPUT_TOPIC");
+        if (env)
+        {
+                debug("set output kafka topic to: [%s]\n", env);
+                memset(OUTPUT->topic, 0x0, TOPIC_LEN);
+                strcpy(OUTPUT->topic, env);
+        }
+
 	strcpy(OUTPUT->brokers, kafka_broker());
 	memset(OUTPUT->errstr, 0x0, sizeof(OUTPUT->errstr));
 

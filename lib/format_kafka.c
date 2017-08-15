@@ -30,13 +30,14 @@
 #define ERR_LEN 512
 
 //----- KAFKA CONFIG -----
-//#define KAFKA_TOPIC "kafkatrace"	//not used anymore
+//#define KAFKA_TOPIC "kafkatrace"		//not used anymore
 #define KAFKA_BROKER "localhost:9092"
-//#define KAFKA_GROUP "kafkatracegroup"	//group name - not used anymore
-#define KAFKA_MAX_TOPICS 3		//max number of topics to subscribe (only for input)
-#define KAFKA_COMPRESSION "snappy"	//could be also "gzip" or "lz4"
-#define KAFKA_BATCH_MSGS "100"		//batch of msgs to send
-#define KAFKA_BUFFERING_MS "100"	//ms of waiting till we get full batch of msgs
+//#define KAFKA_GROUP "kafkatracegroup"		//group name - not used anymore
+#define KAFKA_MAX_TOPICS 3			//max number of topics to subscribe (only for input)
+#define KAFKA_COMPRESSION "snappy"		//could be also "gzip" or "lz4"
+#define KAFKA_BATCH_MSGS "100"			//batch of msgs to send
+#define KAFKA_BUFFERING_MS "100"		//ms of waiting till we get full batch of msgs
+#define KAFKA_BUFFERING_MAX_MSG "10000000"	//max num of msgs for producer queue (max 10M)
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
@@ -582,6 +583,7 @@ static int kafka_init_output(libtrace_out_t *libtrace)
         rd_kafka_conf_set(OUTPUT->conf, "compression.codec", KAFKA_COMPRESSION, OUTPUT->errstr, sizeof(OUTPUT->errstr));
         rd_kafka_conf_set(OUTPUT->conf, "batch.num.messages", KAFKA_BATCH_MSGS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
         rd_kafka_conf_set(OUTPUT->conf, "queue.buffering.max.ms", KAFKA_BUFFERING_MS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
+        rd_kafka_conf_set(OUTPUT->conf, "queue.buffering.max.messages", KAFKA_BUFFERING_MAX_MSG, OUTPUT->errstr, sizeof(OUTPUT->errstr));
 
         //topic configuration
         OUTPUT->topic_conf = rd_kafka_topic_conf_new();

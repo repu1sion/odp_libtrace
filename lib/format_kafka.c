@@ -1219,17 +1219,20 @@ static void kafka_fin_packet(libtrace_packet_t *packet)
 static int kafka_write_packet(libtrace_out_t *libtrace, 
 		libtrace_packet_t *packet) 
 {
-	debug("%s() \n", __func__);
-
 	int numbytes = 0;
+	//rd_kafka_resp_err_t err;
+
+	debug("%s() \n", __func__);
 
 	//sending kafka message -----
 	size_t len = trace_get_capture_length(packet);
 	if (rd_kafka_produce(OUTPUT->rkt, OUTPUT->partition, RD_KAFKA_MSG_F_COPY,
 		 packet->payload, len, NULL, 0, NULL) == -1)
 	{
-		fprintf(stderr, "%% Failed to produce to topic %s partition %i: \n",
-			rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition);
+		fprintf(stderr, "%% Failed to produce to topic %s partition %i with err: %s \n",
+			rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition, 
+			rd_kafka_err2str(rd_kafka_errno2err(errno)));
+		
 		/* Poll to handle delivery reports */
 		rd_kafka_poll(OUTPUT->rk, 0);
 		return numbytes;

@@ -17,11 +17,17 @@
 #include <syslog.h>
 
 #define FORMAT(x) ((struct kafka_format_data_t *)x->format_data)
-#define DATAOUT(x) ((struct kafka_format_data_out_t *)x->format_data)
+#define DATAOUT(x) ((struct acce_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
 #define WIRELEN_DROPLEN 4
 
+//acce config
+#define ACCE_QUEUE_DEPTH	512
+
+
+
+//old stuff
 #define TOPIC_LEN 512
 #define HOSTNAME_LEN 256
 #define BROKER_LEN 512
@@ -70,17 +76,10 @@ struct kafka_format_data_t
 	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
 };
 
-struct kafka_format_data_out_t 
+struct acce_format_data_out_t 
 {
-	//kafka vars
-	rd_kafka_t *rk;
-        rd_kafka_conf_t *conf;                  //main conf object
-        rd_kafka_topic_t *rkt;                  //topic object
-        rd_kafka_topic_conf_t *topic_conf;      //topic configuration obj
-        int partition;
-        char topic[TOPIC_LEN];			//our specific topic name
-        char brokers[BROKER_LEN];
-        char errstr[ERR_LEN];
+	//accelio vars
+	
 	//other vars
 	char *path;
 	int level;
@@ -258,7 +257,7 @@ static int kafka_init_consume(libtrace_t *libtrace)
 }
 
 
-static int ace_init_input(libtrace_t *libtrace)
+static int acce_init_input(libtrace_t *libtrace)
 {
 	int rv;
 
@@ -374,25 +373,43 @@ static int kafka_init_input(libtrace_t *libtrace)
 }
 
 //Initialises an output trace using the capture format.
-static int kafka_init_output(libtrace_out_t *libtrace) 
+static int acce_init_output(libtrace_out_t *libtrace) 
 {
-	char *env;
+	int queue_depth; 
+        int max_msg_size = 0;
 
 	debug("%s() \n", __func__);
 
-	libtrace->format_data = malloc(sizeof(struct kafka_format_data_out_t));
+	libtrace->format_data = malloc(sizeof(struct acce_format_data_out_t));
 	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 
-	//init kafka
-	/* The unassigned partition is used by the producer API for messages
-	 * that should be partitioned using the configured or default partitioner.*/
-	OUTPUT->partition = RD_KAFKA_PARTITION_UA;	//it is -1
+	//init accelio ---------------------------------------------------------
+	/* initialize library */
+        xio_init();
+        /* get minimal queue depth */
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
+        queue_depth = QUEUE_DEPTH > opt ? opt : QUEUE_DEPTH;
 
-	//set default output topic: capture.$hostname
-	strcpy(OUTPUT->topic, kafka_hostname());
+        /* get max msg size */
+        /* this size distinguishes between big and small msgs, where for small msgs rdma_post_send/rdma_post_recv
+ *         are called as opposed to to big msgs where rdma_write/rdma_read are called */
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
+        max_msg_size = opt;
+
+        /* create thread context for the client */
+        session_data.ctx = xio_context_create(NULL, 0, -1);
+
+
+
+
+
+
+
+	//end accelio ----------------------------------------------------------
+
 
 	//overwrite output topic from env variable if such is present
         env = getenv("KAFKA_OUTPUT_TOPIC");
@@ -1222,7 +1239,7 @@ static struct libtrace_format_t kafka = {
         NULL,                           /* config_input - Sets value to some option */
         kafka_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
         kafka_pause_input,               /* pause_input */
-        kafka_init_output,               /* init_output - Initialises an output trace using the capture format. */
+        acce_init_output,               /* init_output - Initialises an output trace using the capture format. */
         kafka_config_output,             /* config_output */
         kafka_start_output,              /* start_output */
         kafka_fin_input,	         /* fin_input - Stops capture input data.*/

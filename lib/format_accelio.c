@@ -24,8 +24,8 @@
 
 //acce config
 #define ACCE_QUEUE_DEPTH	512
-
-
+#define ACCE_SERVER 		"localhost"
+#define ACCE_PORT 		"9992"		//XXX - change it
 
 //old stuff
 #define TOPIC_LEN 512
@@ -55,6 +55,15 @@
  #define error(x...)
 #endif
 
+
+//callbacks for accelio
+static struct xio_session_ops ses_ops = {
+        .on_session_event               =  on_session_event, 	//XXX - add callback
+        .on_session_established         =  NULL,
+        .on_msg                         =  on_response,		//XXX - add callback
+        .on_msg_error                   =  NULL
+};
+
 struct kafka_format_data_t 
 {
 	//kafka vars
@@ -79,6 +88,9 @@ struct kafka_format_data_t
 struct acce_format_data_out_t 
 {
 	//accelio vars
+	struct xio_context *ctx;
+        struct xio_connection *conn;
+        uint64_t cnt;
 	
 	//other vars
 	char *path;
@@ -375,8 +387,12 @@ static int kafka_init_input(libtrace_t *libtrace)
 //Initialises an output trace using the capture format.
 static int acce_init_output(libtrace_out_t *libtrace) 
 {
+	struct xio_session *session;
+	struct xio_session_params params;
+	struct xio_connection_params cparams;
 	int queue_depth; 
         int max_msg_size = 0;
+	char url[256] = {0};
 
 	debug("%s() \n", __func__);
 
@@ -386,22 +402,42 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 
+	memset(&params, 0, sizeof(params));
 	//init accelio ---------------------------------------------------------
 	/* initialize library */
         xio_init();
         /* get minimal queue depth */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
         queue_depth = QUEUE_DEPTH > opt ? opt : QUEUE_DEPTH;
+	debug("queue_depth: %d\n", queue_depth);
 
         /* get max msg size */
-        /* this size distinguishes between big and small msgs, where for small msgs rdma_post_send/rdma_post_recv
- *         are called as opposed to to big msgs where rdma_write/rdma_read are called */
+        /* this size distinguishes between big and small msgs, where for small msgs
+	   rdma_post_send/rdma_post_recv are called as opposed to to big msgs where 
+	   rdma_write/rdma_read are called */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
         max_msg_size = opt;
+	debug("max_msg_size : %d\n", max_msg_size);
 
         /* create thread context for the client */
-        session_data.ctx = xio_context_create(NULL, 0, -1);
+        OUTPUT->ctx = xio_context_create(NULL, 0, -1);
 
+	/* create url to connect to */
+        sprintf(url, "rdma://%s:%s", ACCE_SERVER, ACCE_PORT);
+
+        params.type             = XIO_SESSION_CLIENT;
+        params.ses_ops          = &ses_ops;
+        params.user_context     = libtrace->format_data;	//XXX - check it later(was &session_data)
+        params.uri              = url;
+
+        session = xio_session_create(&params);
+
+	cparams.session                 = session;                                                                     
+        cparams.ctx                     = OUTPUT->ctx;                                                            
+        cparams.conn_user_context       = libtrace->format_data;	//XXX - check it later(was &session_data)
+                                                                                                                       
+        /* connect the session  */                                                                                     
+        OUTPUT->conn = xio_connect(&cparams);
 
 
 

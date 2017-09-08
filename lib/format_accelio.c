@@ -90,6 +90,7 @@ struct acce_format_data_out_t
 	//accelio vars
 	struct xio_context *ctx;
         struct xio_connection *conn;
+	struct xio_msg req_ring;		//could be a buffer, but let's store a single msg here
         uint64_t cnt;
 	
 	//other vars
@@ -401,6 +402,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
+	memset(&OUTPUT->req_ring, 0x0, sizeof(struct xio_msg));
 
 	memset(&params, 0, sizeof(params));
 	//init accelio ---------------------------------------------------------
@@ -447,6 +449,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	//end accelio ----------------------------------------------------------
 
 
+#if 0
 	//overwrite output topic from env variable if such is present
         env = getenv("KAFKA_OUTPUT_TOPIC");
         if (env)
@@ -455,47 +458,12 @@ static int acce_init_output(libtrace_out_t *libtrace)
                 memset(OUTPUT->topic, 0x0, TOPIC_LEN);
                 strcpy(OUTPUT->topic, env);
         }
-
-	strcpy(OUTPUT->brokers, kafka_broker());
-	memset(OUTPUT->errstr, 0x0, sizeof(OUTPUT->errstr));
-
-        //----- kafka configuration -----
-	//default settings, batch.num.messages=10000 and queue.buffering.max.ms=1000
-        //'batch.num.messages' - the min numb of messages to wait for to accumulate before sending
-        OUTPUT->conf = rd_kafka_conf_new();
-        rd_kafka_conf_set(OUTPUT->conf, "compression.codec", KAFKA_COMPRESSION, OUTPUT->errstr, sizeof(OUTPUT->errstr));
-        rd_kafka_conf_set(OUTPUT->conf, "batch.num.messages", KAFKA_BATCH_MSGS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
-        rd_kafka_conf_set(OUTPUT->conf, "queue.buffering.max.ms", KAFKA_BUFFERING_MS, OUTPUT->errstr, sizeof(OUTPUT->errstr));
-        rd_kafka_conf_set(OUTPUT->conf, "queue.buffering.max.messages", KAFKA_BUFFERING_MAX_MSG, OUTPUT->errstr, sizeof(OUTPUT->errstr));
-
-        //topic configuration
-        OUTPUT->topic_conf = rd_kafka_topic_conf_new();
-
-        //----- create kafka handle -----
-        OUTPUT->rk = rd_kafka_new(RD_KAFKA_PRODUCER, OUTPUT->conf, OUTPUT->errstr, sizeof(OUTPUT->errstr));
-        if (!OUTPUT->rk)
-        {
-                fprintf(stderr, "%% Failed to create new producer: %s\n", OUTPUT->errstr);
-                exit(1);
-        }
-
-        rd_kafka_set_log_level(OUTPUT->rk, LOG_DEBUG);
-
-        //add brokers
-        if (!rd_kafka_brokers_add(OUTPUT->rk, OUTPUT->brokers))
-        {
-                fprintf(stderr, "%% No valid brokers specified\n");
-                exit(1);
-        }
-
-        //create topic
-        OUTPUT->rkt = rd_kafka_topic_new(OUTPUT->rk, OUTPUT->topic, OUTPUT->topic_conf);
-        OUTPUT->topic_conf = NULL; /* Now owned by topic */
+#endif
 
 	return 0;
 }
 
-static int kafka_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
+static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
 {
 	debug("%s() \n", __func__);
 
@@ -570,7 +538,7 @@ static int kafka_pause_input(libtrace_t * libtrace)
 	return 0;
 }
 
-static int kafka_start_output(libtrace_out_t *libtrace) 
+static int acce_start_output(libtrace_out_t *libtrace) 
 {
 	debug("%s() \n", __func__);
 
@@ -624,33 +592,15 @@ static int kafka_fin_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int kafka_fin_output(libtrace_out_t *libtrace) 
+static int acce_fin_output(libtrace_out_t *libtrace) 
 {
 	debug("%s() \n", __func__);
 
-	//STOP KAFKA AND FREE RESOURCES
-        /* Poll to handle delivery reports */
-        rd_kafka_poll(OUTPUT->rk, 0);
-
-        /* Wait for messages to be delivered */
-        while (rd_kafka_outq_len(OUTPUT->rk) > 0)       //XXX - do we need it?
-                rd_kafka_poll(OUTPUT->rk, 100);
-
-
-        //----- free resources -----
-        /* Destroy topic */
-        rd_kafka_topic_destroy(OUTPUT->rkt);
-
-        /* Destroy the handle */
-        rd_kafka_destroy(OUTPUT->rk);
-
-        if (OUTPUT->topic_conf)
-                rd_kafka_topic_conf_destroy(OUTPUT->topic_conf);
+	/* free the context */
+        xio_context_destroy(OUTPUT->ctx);
+        xio_shutdown();
 
 	wandio_wdestroy(OUTPUT->file);
-
-	//XXX - we have stopped pktio already in odp_fin_input(). 
-	//Probably there is a need to stop it also here, but probably not.
 
 	free(libtrace->format_data);
 	return 0;
@@ -1048,35 +998,64 @@ static void kafka_fin_packet(libtrace_packet_t *packet)
 	}
 }
 
-static int kafka_write_packet(libtrace_out_t *libtrace, 
-		libtrace_packet_t *packet) 
+static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	int numbytes = 0;
-	//rd_kafka_resp_err_t err;
-
 	debug("%s() \n", __func__);
 
-	//sending kafka message -----
+	int numbytes = 0;
+	struct xio_reg_mem xbuf;
+	uint8_t *data = NULL;
+	struct xio_msg *req = &OUTPUT->req_ring;
 	size_t len = trace_get_capture_length(packet);
-	if (rd_kafka_produce(OUTPUT->rkt, OUTPUT->partition, RD_KAFKA_MSG_F_COPY,
-		 packet->payload, len, NULL, 0, NULL) == -1)
-	{
-		fprintf(stderr, "%% Failed to produce to topic %s partition %i. err num: %d, err: %s \n",
-			rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition, rd_kafka_errno2err(errno),
-			rd_kafka_err2str(rd_kafka_errno2err(errno)));
-		
-		/* Poll to handle delivery reports */
-		rd_kafka_poll(OUTPUT->rk, 0);
-		return numbytes;
+
+	//sending accelio message -----
+	req->out.header.iov_base = strdup("accelio header request");
+	req->out.header.iov_len = strlen((const char *)req->out.header.iov_base) + 1;
+	/* iovec[0]*/
+	req->in.sgl_type = XIO_SGL_TYPE_IOV;
+	req->in.data_iov.max_nents = XIO_IOVLEN;
+	req->out.sgl_type = XIO_SGL_TYPE_IOV;
+	req->out.data_iov.max_nents = XIO_IOVLEN;
+
+	/* data */
+	if (len < max_msg_size) 
+	{ 	/* small msgs - just set iov_base to packet pointer*/
+		req->out.data_iov.sglist[0].iov_base = packet->payload;
+	} 
+	else 
+	{ 	/* big msgs */
+		if (data == NULL) 
+		{
+			printf("allocating xio memory...\n");
+			xio_mem_alloc(len, &xbuf);
+			data = (uint8_t *)xbuf.addr;
+			memset(data, 0x0, len);
+			memcpy(data, packet->payload);
+		}
+		req->out.data_iov.sglist[0].mr = xbuf.mr;
+		req->out.data_iov.sglist[0].iov_base = data;
 	}
 
-	debug("# %% Sent %zd bytes to topic [%s] partition [%i]\n",
-		len, rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition);
+	req->out.data_iov.sglist[0].iov_len = len + 1;
+	req->out.data_iov.nents = 1;
 
-	/* Poll to handle delivery reports */
-	rd_kafka_poll(OUTPUT->rk, 0);
+	//sending
+	xio_send_request(OUTPUT->conn, req);
 
-	//end of kafka -----
+	/* event dispatcher is now running */
+        xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);	//XXX - maybe bad idea to wait infinitely
+
+	//freeing packet memory
+	free(req->out.header.iov_base);
+	if (len < max_msg_size) 
+		free(req->out.data_iov.sglist[0].iov_base);
+        if (xbuf.addr) 
+	{
+                xio_mem_free(&xbuf);
+                xbuf.addr = NULL;
+        }
+
+	//end of accelio part ---------
 
 	assert(OUTPUT->file);
 
@@ -1266,24 +1245,24 @@ static void lodp_help(void)
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
 static struct libtrace_format_t kafka = {
-        "kafka",			/* name used in URI to identify capture format - odp:iface */
+        "acce",				/* name used in URI to identify capture format - odp:iface */
         "$Id$",				/* version of this module */
-        TRACE_FORMAT_KAFKA,		/* The RT protocol type of this module */
+        TRACE_FORMAT_ACCE,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
         kafka_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
-        kafka_start_input,	        /* start_input-Starts or unpause an input trace (also opens file or device for reading)*/
+        kafka_start_input,	        /* start_input-Starts or unpause an input trace */
         kafka_pause_input,               /* pause_input */
         acce_init_output,               /* init_output - Initialises an output trace using the capture format. */
-        kafka_config_output,             /* config_output */
-        kafka_start_output,              /* start_output */
+        acce_config_output,             /* config_output */
+        acce_start_output,              /* start_output */
         kafka_fin_input,	         /* fin_input - Stops capture input data.*/
-        kafka_fin_output,                /* fin_output */
-        kafka_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet structure */
-        lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
+        acce_fin_output,                /* fin_output */
+        kafka_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet */
+        lodp_prepare_packet,		/* prepare_packet - Converts a buffer with packet into a libtrace packet */
 	kafka_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
-        kafka_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+        acce_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */

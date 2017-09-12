@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <syslog.h>
 
 #include "config.h"
 #include "libtrace.h"
@@ -13,10 +14,9 @@
 #include "rt_protocol.h"
 
 #include <odp_api.h>
+#include <libxio.h>
 
-#include <syslog.h>
-
-#define FORMAT(x) ((struct kafka_format_data_t *)x->format_data)
+#define FORMAT(x) ((struct acce_format_data_t *)x->format_data)
 #define DATAOUT(x) ((struct acce_format_data_out_t *)x->format_data)
 #define OUTPUT DATAOUT(libtrace)
 
@@ -56,14 +56,7 @@
 #endif
 
 
-//callbacks for accelio
-static struct xio_session_ops ses_ops = {
-        .on_session_event               =  on_session_event, 	//XXX - add callback
-        .on_session_established         =  NULL,
-        .on_msg                         =  on_response,		//XXX - add callback
-        .on_msg_error                   =  NULL
-};
-
+#if 0
 struct kafka_format_data_t 
 {
 	//kafka vars
@@ -84,6 +77,20 @@ struct kafka_format_data_t
 	u_char *l2h;				//l2 header for current packet
 	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
 };
+#endif
+
+
+struct acce_format_data_t
+{
+	
+	//other vars
+	void *pkt;				//store received packet here
+	int pkt_len;				//length of current packet
+	int pvt;				//for private data saving
+	unsigned int pkts_read;
+	u_char *l2h;				//l2 header for current packet
+	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
+};
 
 struct acce_format_data_out_t 
 {
@@ -92,6 +99,7 @@ struct acce_format_data_out_t
         struct xio_connection *conn;
 	struct xio_msg req_ring;		//could be a buffer, but let's store a single msg here
         uint64_t cnt;
+        int max_msg_size;
 	
 	//other vars
 	char *path;
@@ -101,6 +109,7 @@ struct acce_format_data_out_t
 	iow_t *file;
 };
 
+#if 1
 typedef struct kafka_per_stream_s 
 {
 	int id;
@@ -110,8 +119,46 @@ typedef struct kafka_per_stream_s
 	u_char *l2h;
 	unsigned int pkts_read;
 } kafka_per_stream_t;
+#endif
+
+
+static int on_session_event(struct xio_session *session,
+                            struct xio_session_event_data *event_data,
+                            void *cb_user_context)
+{
+        struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)
+                                                cb_user_context;
+
+        printf("session event: %s. reason: %s\n",
+               xio_session_event_str(event_data->event),
+               xio_strerror(event_data->reason));
+
+        switch (event_data->event) 
+	{
+        case XIO_SESSION_CONNECTION_TEARDOWN_EVENT:
+                xio_connection_destroy(event_data->conn);
+                break;
+        case XIO_SESSION_TEARDOWN_EVENT:
+                xio_session_destroy(session);
+                xio_context_stop_loop(session_data->ctx);  /* exit */
+                break;
+        default:
+                break;
+        };
+
+        return 0;
+}
+
+//callbacks for accelio
+static struct xio_session_ops ses_ops = {
+        .on_session_event               =  on_session_event, 
+        .on_session_established         =  NULL,
+        .on_msg                         =  NULL,		//XXX - add callback
+        .on_msg_error                   =  NULL
+};
 
 //get hostname
+#if 0
 static char* kafka_hostname()
 {
 	int rv;
@@ -164,115 +211,11 @@ static char* kafka_broker()
 	debug("full broker address: %s \n", broker);
 	return broker;
 }
-
-//get env variable KAFKA_GROUP . if no such - use default value group.$hostname	
-static char* kafka_group()
-{
-	char *env;
-	static char group[GROUP_LEN] = {0};
-	char hname[HOSTNAME_LEN] = {0};
-
-	env = getenv("KAFKA_GROUP");
-        if (env)
-	{
-        	debug("our KAFKA_GROUP env var is: [%s]\n", env);
-		memset(group, 0x0, GROUP_LEN);
-		strcpy(group, env);
-	}
-	else
-	{
-		memset(group, 0x0, GROUP_LEN);
-		strcpy(group, "group.");
-		gethostname(hname, HOSTNAME_LEN);
-		strcat(group, hname);
-		debug("no KAFKA_GROUP var found. default group will be used\n");
-	}
-
-	debug("group name: %s \n", group);
-	return group;
-}
-
-//legacy func called on every message. consuming code could be added here
-static void msg_consume(rd_kafka_message_t *rkmessage, void *opaque UNUSED) 
-{
-	rd_kafka_message_t *msg = rkmessage;
-	msg = msg;
-	debug("len: %d , payload: %s\n", (int)msg->len, (char *)msg->payload);
-}
-
-//1. read env variables. 2. create topics-partitions. 3. if fail to get
-//topics from env variables - set default one capture.$hostname. 4. subscribe
-//returns num of found topics in env vars and registered successfully
-static int kafka_init_consume(libtrace_t *libtrace)
-{
-	int numtopics = 0;
-	char *env;
-	char topicname[50] = {0};
-	char digit[10] = {0};
-	rd_kafka_resp_err_t err;
-	int i;
-
-	FORMAT(libtrace)->topics = rd_kafka_topic_partition_list_new(KAFKA_MAX_TOPICS);
-
-	for (i = 0; i < KAFKA_MAX_TOPICS; i++)
-	{
-		memset(topicname, 0x0, 50);
-		strcpy(topicname, "KAFKA_CONSUME_TOPIC");
-		sprintf(digit, "%d", i+1);
-		strcat(topicname, digit);
-		debug("looking for env variable %s to read topic name \n", topicname);
-		env = getenv(topicname);
-		if (env)
-		{
-			debug("#%d topic name is: [%s]\n", i+1, env);
-			if (rd_kafka_topic_partition_list_add(FORMAT(libtrace)->topics, env,
-								 FORMAT(libtrace)->partition))
-			{
-				numtopics++;
-				debug("topic+partition added successfully\n");
-			}
-			else
-			{
-				error("failed to add topic+partition\n");
-				continue;
-			}
-			
-		}
-		else
-		{
-			debug("no var found. \n");
-		}
-
-	}
-	
-	//if we didn't get any topics from env variables - we try to add default one: capture.$hostname
-	if (!numtopics)
-	{
-		if (rd_kafka_topic_partition_list_add(FORMAT(libtrace)->topics, kafka_hostname(),
-							FORMAT(libtrace)->partition))
-		{
-			debug("default topic+partition added successfully\n");
-			numtopics++;
-		}
-		else
-			error("failed to add topic+partition\n");
-	}
-
-	//we need at least one topic found to subscribe
-	if (numtopics)	
-	{
-		err = rd_kafka_subscribe(FORMAT(libtrace)->rk, FORMAT(libtrace)->topics);
-		if (err)
-                        error("Failed to start consuming topics: %s\n", rd_kafka_err2str(err));
-	}
-
-	return numtopics;
-}
-
+#endif
 
 static int acce_init_input(libtrace_t *libtrace)
 {
-	int rv;
+	int rv = 0;
 
 	debug("%s() \n", __func__);
 
@@ -280,14 +223,16 @@ static int acce_init_input(libtrace_t *libtrace)
 	memset(&stream, 0x0, sizeof(kafka_per_stream_t));
 
 	//init all the data in kafka_format_data_t
-	libtrace->format_data = malloc(sizeof(struct kafka_format_data_t));
+	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
 
+	return rv;
 }
 
 /* Initialises an input trace using the capture format. 
    @param libtrace 	The input trace to be initialised */
+#if 0
 static int kafka_init_input(libtrace_t *libtrace) 
 {
 	int rv;
@@ -307,7 +252,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
 
 	//init kafka
-	FORMAT(libtrace)->partition = 0;
+		FORMAT(libtrace)->partition = 0;
 	//strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
 	strcpy(FORMAT(libtrace)->topic, kafka_hostname());
 
@@ -384,6 +329,7 @@ static int kafka_init_input(libtrace_t *libtrace)
 
 	return 0;
 }
+#endif
 
 //Initialises an output trace using the capture format.
 static int acce_init_output(libtrace_out_t *libtrace) 
@@ -392,7 +338,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	struct xio_session_params params;
 	struct xio_connection_params cparams;
 	int queue_depth; 
-        int max_msg_size = 0;
+	int opt, optlen;
 	char url[256] = {0};
 
 	debug("%s() \n", __func__);
@@ -410,7 +356,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
         xio_init();
         /* get minimal queue depth */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
-        queue_depth = QUEUE_DEPTH > opt ? opt : QUEUE_DEPTH;
+        queue_depth = ACCE_QUEUE_DEPTH > opt ? opt : ACCE_QUEUE_DEPTH;
 	debug("queue_depth: %d\n", queue_depth);
 
         /* get max msg size */
@@ -418,8 +364,8 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	   rdma_post_send/rdma_post_recv are called as opposed to to big msgs where 
 	   rdma_write/rdma_read are called */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
-        max_msg_size = opt;
-	debug("max_msg_size : %d\n", max_msg_size);
+        OUTPUT->max_msg_size = opt;
+	debug("max_msg_size : %d\n", OUTPUT->max_msg_size);
 
         /* create thread context for the client */
         OUTPUT->ctx = xio_context_create(NULL, 0, -1);
@@ -447,18 +393,6 @@ static int acce_init_output(libtrace_out_t *libtrace)
 
 
 	//end accelio ----------------------------------------------------------
-
-
-#if 0
-	//overwrite output topic from env variable if such is present
-        env = getenv("KAFKA_OUTPUT_TOPIC");
-        if (env)
-        {
-                debug("set output kafka topic to: [%s]\n", env);
-                memset(OUTPUT->topic, 0x0, TOPIC_LEN);
-                strcpy(OUTPUT->topic, env);
-        }
-#endif
 
 	return 0;
 }
@@ -558,8 +492,6 @@ static int acce_start_output(libtrace_out_t *libtrace)
 
 static int kafka_fin_input(libtrace_t *libtrace) 
 {
-        rd_kafka_resp_err_t err;
-
 	debug("%s() \n", __func__);
 
 	if (libtrace->io)
@@ -568,18 +500,8 @@ static int kafka_fin_input(libtrace_t *libtrace)
 		debug("wandio destroyed\n");
 	}
 
-        err = rd_kafka_consumer_close(FORMAT(libtrace)->rk);
-        if (err)
-                fprintf(stderr, "%% Failed to close consumer: %s\n",
-                        rd_kafka_err2str(err));
-        else
-                fprintf(stderr, "%% kafka consumer closed\n");
-
 	if (FORMAT(libtrace)->per_stream)
 		libtrace_list_deinit(FORMAT(libtrace)->per_stream);
-
-	if(FORMAT(libtrace)->topics)
-		rd_kafka_topic_partition_list_destroy(FORMAT(libtrace)->topics);
 
 	if (libtrace->format_data)
 	{
@@ -661,6 +583,7 @@ static int kafka_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
 
+#if 0
 	while (1) 
 	{
 		rd_kafka_message_t *rkmessage;
@@ -739,9 +662,11 @@ static int kafka_read_pack(libtrace_t *libtrace)
 		return numbytes;
 	}
 
+#endif
 	/* We'll NEVER get here */
 	return READ_ERROR;
 }
+
 
 /* Reads the next packet from an input trace into the provided packet 
  * structure.
@@ -817,6 +742,7 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 	int numbytes;
 	kafka_per_stream_t *stream = t->format_data;
 
+#if 0
 	while (1) 
 	{
 		rd_kafka_message_t *rkmessage;
@@ -896,6 +822,7 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 		return numbytes;
 	}
 
+#endif
 	/* We'll NEVER get here */
 	return READ_ERROR;
 }
@@ -1018,7 +945,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	req->out.data_iov.max_nents = XIO_IOVLEN;
 
 	/* data */
-	if (len < max_msg_size) 
+	if ((int)len < OUTPUT->max_msg_size) 
 	{ 	/* small msgs - just set iov_base to packet pointer*/
 		req->out.data_iov.sglist[0].iov_base = packet->payload;
 	} 
@@ -1030,7 +957,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 			xio_mem_alloc(len, &xbuf);
 			data = (uint8_t *)xbuf.addr;
 			memset(data, 0x0, len);
-			memcpy(data, packet->payload);
+			memcpy(data, packet->payload, len);
 		}
 		req->out.data_iov.sglist[0].mr = xbuf.mr;
 		req->out.data_iov.sglist[0].iov_base = data;
@@ -1047,7 +974,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	//freeing packet memory
 	free(req->out.header.iov_base);
-	if (len < max_msg_size) 
+	if ((int)len < OUTPUT->max_msg_size) 
 		free(req->out.data_iov.sglist[0].iov_base);
         if (xbuf.addr) 
 	{
@@ -1244,13 +1171,13 @@ static void lodp_help(void)
 
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
-static struct libtrace_format_t kafka = {
+static struct libtrace_format_t acce = {
         "acce",				/* name used in URI to identify capture format - odp:iface */
         "$Id$",				/* version of this module */
         TRACE_FORMAT_ACCE,		/* The RT protocol type of this module */
 	NULL,				/* probe filename - guess capture format - NOT NEEDED*/
 	NULL,				/* probe magic - NOT NEEDED*/
-        kafka_init_input,	        /* init_input - Initialises an input trace using the capture format */
+        acce_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
         kafka_start_input,	        /* start_input-Starts or unpause an input trace */
         kafka_pause_input,               /* pause_input */
@@ -1296,8 +1223,8 @@ static struct libtrace_format_t kafka = {
 	NULL				/* get thread stats */ 
 };
 
-void kafka_constructor(void) 
+void acce_constructor(void) 
 {
-	debug("registering kafka struct with address: %p , init_output: %p\n", &kafka, kafka.init_output);
-	register_format(&kafka);
+	debug("registering acce struct with address: %p , init_output: %p\n", &acce, acce.init_output);
+	register_format(&acce);
 }

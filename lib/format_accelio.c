@@ -82,10 +82,16 @@ struct kafka_format_data_t
 
 struct acce_format_data_t
 {
-	
+	//accelio vars
+	struct xio_server       *server;        /* server portal */
+	struct xio_context      *ctx;
+        struct xio_connection   *conn;
+        int max_msg_size;
+
 	//other vars
 	void *pkt;				//store received packet here
 	int pkt_len;				//length of current packet
+	u_char got_pkt;				//set to 1 if we have packet
 	int pvt;				//for private data saving
 	unsigned int pkts_read;
 	u_char *l2h;				//l2 header for current packet
@@ -122,7 +128,7 @@ typedef struct kafka_per_stream_s
 #endif
 
 
-static int on_session_event(struct xio_session *session,
+static int on_session_event_client(struct xio_session *session,
                             struct xio_session_event_data *event_data,
                             void *cb_user_context)
 {
@@ -149,11 +155,156 @@ static int on_session_event(struct xio_session *session,
         return 0;
 }
 
-//callbacks for accelio
+//callbacks for accelio client (output)
 static struct xio_session_ops ses_ops = {
-        .on_session_event               =  on_session_event, 
+        .on_session_event               =  on_session_event_client, 
         .on_session_established         =  NULL,
         .on_msg                         =  NULL,		//XXX - add callback
+        .on_msg_error                   =  NULL
+};
+
+//------------------------------ server callbacks ------------------------------
+
+static int on_session_event_server(struct xio_session *session,
+                            struct xio_session_event_data *event_data,
+                            void *cb_user_context)
+{
+        struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
+
+        printf("session event: %s. session:%p, connection:%p, reason: %s\n",
+               xio_session_event_str(event_data->event),
+               session, event_data->conn,
+               xio_strerror(event_data->reason));
+
+        switch (event_data->event) 
+	{
+        case XIO_SESSION_NEW_CONNECTION_EVENT:
+                server_data->conn = event_data->conn;
+                break;
+        case XIO_SESSION_CONNECTION_TEARDOWN_EVENT:
+                xio_connection_destroy(event_data->conn);
+                server_data->conn = NULL;
+                break;
+        case XIO_SESSION_TEARDOWN_EVENT:
+                xio_session_destroy(session);
+                xio_context_stop_loop(server_data->ctx);  /* exit */
+                break;
+        default:
+                break;
+        };
+
+        return 0;
+}
+
+static int on_new_session(struct xio_session *session,
+                          struct xio_new_session_req *req,
+                          void *cb_user_context)
+{
+        struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
+	req = req;
+
+        /* automatically accept the request */
+        printf("new session event. session:%p\n", session);
+
+        if (!server_data->conn)
+                xio_accept(session, NULL, 0, NULL, 0);
+        else
+                xio_reject(session, (enum xio_status)EISCONN, NULL, 0);
+
+        return 0;
+}
+
+static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
+{
+        struct xio_iovec_ex     *sglist = vmsg_sglist(&req->in);
+        char                    *str;
+        int                     nents = vmsg_sglist_nents(&req->in);
+        int                     len, i;
+        //char                    tmp;
+
+        /* note all data is packed together so in order to print each
+ *          * part on its own NULL character is temporarily stuffed
+ *                   * before the print and the original character is restored after
+ *                            * the printf
+ *                                     */
+
+//we don't need header yet
+#if 0
+        if (++server_data->cnt == PRINT_COUNTER) {
+                str = (char *)req->in.header.iov_base;
+                len = req->in.header.iov_len;
+                if (str) {
+                        if (((unsigned)len) > 64)
+                                len = 64;
+                        tmp = str[len];
+                        str[len] = '\0';
+                        printf("message header : [%llu] - %s\n",
+                               (unsigned long long)(req->sn + 1), str);
+                        str[len] = tmp;
+                }
+	}
+#endif
+	for (i = 0; i < nents; i++)	//it should be always 1, as we set in client part
+	{
+		str = (char *)sglist[i].iov_base;
+		len = sglist[i].iov_len;
+		if (str) 
+		{	//copy ptr and len
+			dt->pkt = malloc(len);
+			memcpy(dt->pkt, str, len);
+			dt->pkt_len = len;
+			dt->got_pkt = 1;	//we signal that we have packet
+#if 0
+			if (((unsigned)len) > 64)
+				len = 64;
+			tmp = str[len];
+			str[len] = '\0';
+			printf("message data: [%llu][%d][%d] - %s\n",
+			       (unsigned long long)(req->sn + 1),
+			       i, len, str);
+			str[len] = tmp;
+#endif
+		}
+	}
+        //server_data->cnt = 0;
+        req->in.header.iov_base   = NULL;
+        req->in.header.iov_len    = 0;
+        vmsg_sglist_set_nents(&req->in, 0);
+}
+
+
+static int on_request(struct xio_session *session,
+                      struct xio_msg *req,
+                      int last_in_rxq,
+                      void *cb_user_context)
+{
+	debug("on_request()\n");
+
+        struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
+        //struct xio_msg     *rsp = ring_get_next_msg(server_data);
+
+        /* process request */
+        process_request(server_data, req);
+
+
+
+//XXX - are we going to send responses back or not?
+        /* attach request to response */
+#if 0
+        rsp->request = req;
+        xio_send_response(rsp);		
+        server_data->nsent++;
+#endif
+
+        return 0;
+}
+
+// asynchronous callbacks for accelio server (input)
+static struct xio_session_ops server_ops = {
+        .on_session_event               =  on_session_event_server,
+        .on_new_session                 =  on_new_session,
+        .on_msg_send_complete           =  NULL,
+        .on_msg                         =  on_request,
         .on_msg_error                   =  NULL
 };
 
@@ -216,6 +367,8 @@ static char* kafka_broker()
 static int acce_init_input(libtrace_t *libtrace)
 {
 	int rv = 0;
+	int opt, optlen;
+	char url[256] = {0};
 
 	debug("%s() \n", __func__);
 
@@ -226,6 +379,25 @@ static int acce_init_input(libtrace_t *libtrace)
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
+
+        /* initialize library */
+	//init accelio ---------------------------------------------------------
+        xio_init();
+
+        /* get max msg size */
+        /* this size distinguishes between big and small msgs, where for small msgs 
+   	   rdma_post_send/rdma_post_recv
+           are called as opposed to to big msgs where rdma_write/rdma_read are called */
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
+        FORMAT(libtrace)->max_msg_size = opt;
+
+	/* create thread context for the client */
+        FORMAT(libtrace)->ctx = xio_context_create(NULL, 0, -1);
+
+        sprintf(url, "rdma://%s:%s", ACCE_SERVER, ACCE_PORT);
+
+	/* bind a listener server to a portal/url */
+        FORMAT(libtrace)->server = xio_bind(FORMAT(libtrace)->ctx, &server_ops, url, NULL, 0, libtrace->format_data);
 
 	return rv;
 }
@@ -422,12 +594,14 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 	assert(0);
 }
 
-static int kafka_start_input(libtrace_t *libtrace) 
+static int acce_start_input(libtrace_t *libtrace) 
 {
 	int ret = 0;
-	libtrace = libtrace;
+	//libtrace = libtrace;
 
 	debug("%s() \n", __func__);
+
+	xio_context_run_loop(FORMAT(libtrace)->ctx, XIO_INFINITE);
 
 	return ret;
 }
@@ -461,7 +635,7 @@ static int kafka_pstart_input(libtrace_t *libtrace)
    device that is being read from. 
    @return 0 if successful, -1 in the event of error
 */
-static int kafka_pause_input(libtrace_t * libtrace) 
+static int acce_pause_input(libtrace_t * libtrace) 
 {
 	(void)libtrace;
 
@@ -490,7 +664,7 @@ static int acce_start_output(libtrace_out_t *libtrace)
 	return 0;
 }
 
-static int kafka_fin_input(libtrace_t *libtrace) 
+static int acce_fin_input(libtrace_t *libtrace) 
 {
 	debug("%s() \n", __func__);
 
@@ -508,6 +682,11 @@ static int kafka_fin_input(libtrace_t *libtrace)
 		free(libtrace->format_data);
 		libtrace->format_data = NULL;
 	}
+
+	xio_unbind(FORMAT(libtrace)->server);
+        xio_context_destroy(FORMAT(libtrace)->ctx);
+        xio_shutdown();
+
 
 	debug("%s() exiting\n", __func__);
 
@@ -579,9 +758,34 @@ static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *p
 /* internal function (not a registered format routine).
  * with ODP_SCHED_NO_WAIT we always skip to a next iteration with 'continue'
  * but anyway we have a forever loop here till get a new packet */
-static int kafka_read_pack(libtrace_t *libtrace)
+
+
+//in callback process packet and save it into our struct. set flag we got packet
+static int acce_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
+
+	while (1) 
+	{	//XXX - moved to start_input()
+		//xio_context_run_loop(FORMAT(libtrace)->ctx, 100); //XXX - make it shorter, 10ms?
+
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
+		if (FORMAT(libtrace)->got_pkt)
+		{
+			FORMAT(libtrace)->got_pkt = 0;
+			numbytes = FORMAT(libtrace)->pkt_len;
+			debug("have packet with len %d \n", numbytes);
+			return numbytes;
+		}
+
+		usleep(10000);	//10ms
+	}
 
 #if 0
 	while (1) 
@@ -677,13 +881,13 @@ static int kafka_read_pack(libtrace_t *libtrace)
  * framing header, or -1 if an error occurs. 0 is returned in the
  * event of an EOF. 
  *
- * If no packets are available for reading, this function should block
+ * IF NO PACKETS ARE AVAILABLE FOR READING, THIS FUNCTION SHOULD BLOCK
  * until one appears or return 0 if the end of a trace file has been
  * reached.
  */
 
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
-static int kafka_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
+static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
 	uint32_t flags = 0;
 	int numbytes = 0;
@@ -704,8 +908,8 @@ static int kafka_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	packet->buf_control = TRACE_CTRL_EXTERNAL;
 	packet->type = TRACE_RT_DATA_ODP;
 
-	//#2. Read a packet from odp. We wait here forever till packet appears.
-	numbytes = kafka_read_pack(libtrace);
+	//#2. Read a packet from input. We wait here forever till packet appears.
+	numbytes = acce_read_pack(libtrace);
 	if (numbytes == -1) 
 	{
 		trace_set_err(libtrace, errno, "Reading odp packet failed");
@@ -914,7 +1118,7 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 	return pkts_read;
 }
 
-static void kafka_fin_packet(libtrace_packet_t *packet)
+static void acce_fin_packet(libtrace_packet_t *packet)
 {
 	debug("%s() \n", __func__);
 
@@ -1179,16 +1383,16 @@ static struct libtrace_format_t acce = {
 	NULL,				/* probe magic - NOT NEEDED*/
         acce_init_input,	        /* init_input - Initialises an input trace using the capture format */
         NULL,                           /* config_input - Sets value to some option */
-        kafka_start_input,	        /* start_input-Starts or unpause an input trace */
-        kafka_pause_input,               /* pause_input */
+        acce_start_input,	        /* start_input-Starts or unpause an input trace */
+        acce_pause_input,               /* pause_input */
         acce_init_output,               /* init_output - Initialises an output trace using the capture format. */
         acce_config_output,             /* config_output */
         acce_start_output,              /* start_output */
-        kafka_fin_input,	         /* fin_input - Stops capture input data.*/
+        acce_fin_input,	         	/* fin_input - Stops capture input data.*/
         acce_fin_output,                /* fin_output */
-        kafka_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet */
+        acce_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer with packet into a libtrace packet */
-	kafka_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
+	acce_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
         acce_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
@@ -1216,8 +1420,8 @@ static struct libtrace_format_t acce = {
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	kafka_pstart_input,              /* pstart_input */
 	kafka_pread_packets,             /* pread_packets */
-	kafka_pause_input,               /* ppause */
-	kafka_fin_input,                 /* p_fin */
+	acce_pause_input,               /* ppause */
+	acce_fin_input,                 /* p_fin */
 	lodp_pregister_thread,          /* pregister_thread */
 	lodp_punregister_thread,        /* punregister_thread */
 	NULL				/* get thread stats */ 

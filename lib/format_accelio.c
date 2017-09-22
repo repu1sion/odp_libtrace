@@ -26,6 +26,7 @@
 #define ACCE_QUEUE_DEPTH	512
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"		//XXX - change it
+#define SERVER_LEN 512
 
 //old stuff
 #define TOPIC_LEN 512
@@ -39,7 +40,7 @@
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-//#define DEBUG
+#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -338,31 +339,31 @@ static char* kafka_hostname()
 
 	return topic;
 }
+#endif
 
-//get env variable KAFKA_BROKER. if no such - use default value from define	
-static char* kafka_broker()
+//get env variable ACCELIO_SERVER. if no such - use default value from define	
+static char* acce_server()
 {
 	char *env;
-	static char broker[BROKER_LEN] = {0};
+	static char server[SERVER_LEN] = {0};
 
-	env = getenv("KAFKA_BROKER");
+	env = getenv("ACCELIO_SERVER");
         if (env)
 	{
-        	debug("our env var is: [%s]\n", env);
-		memset(broker, 0x0, BROKER_LEN);
-		strcpy(broker, env);
+        	debug("ACCELIO_SERVER var is: [%s]\n", env);
+		memset(server, 0x0, SERVER_LEN);
+		strcpy(server, env);
 	}
 	else
 	{
-		memset(broker, 0x0, BROKER_LEN);
-		strcpy(broker, KAFKA_BROKER);
-		debug("no KAFKA_BROKER var found. default broker will be used\n");
+		memset(server, 0x0, SERVER_LEN);
+		strcpy(server, ACCE_SERVER);
+		debug("no ACCE_SERVER var found. default server will be used\n");
 	}
 
-	debug("full broker address: %s \n", broker);
-	return broker;
+	debug("full server address: %s \n", server);
+	return server;
 }
-#endif
 
 static int acce_init_input(libtrace_t *libtrace)
 {
@@ -394,7 +395,7 @@ static int acce_init_input(libtrace_t *libtrace)
 	/* create thread context for the client */
         FORMAT(libtrace)->ctx = xio_context_create(NULL, 0, -1);
 
-        sprintf(url, "rdma://%s:%s", ACCE_SERVER, ACCE_PORT);
+        sprintf(url, "rdma://%s:%s", acce_server(), ACCE_PORT);
 
 	/* bind a listener server to a portal/url */
         FORMAT(libtrace)->server = xio_bind(FORMAT(libtrace)->ctx, &server_ops, url, NULL, 0, libtrace->format_data);
@@ -543,7 +544,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
         OUTPUT->ctx = xio_context_create(NULL, 0, -1);
 
 	/* create url to connect to */
-        sprintf(url, "rdma://%s:%s", ACCE_SERVER, ACCE_PORT);
+        sprintf(url, "rdma://%s:%s", acce_server(), ACCE_PORT);
 
         params.type             = XIO_SESSION_CLIENT;
         params.ses_ops          = &ses_ops;
@@ -558,11 +559,6 @@ static int acce_init_output(libtrace_out_t *libtrace)
                                                                                                                        
         /* connect the session  */                                                                                     
         OUTPUT->conn = xio_connect(&cparams);
-
-
-
-
-
 
 	//end accelio ----------------------------------------------------------
 

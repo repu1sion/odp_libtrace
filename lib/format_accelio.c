@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <syslog.h>
+#include <pthread.h>
 
 #include "config.h"
 #include "libtrace.h"
@@ -97,6 +98,7 @@ struct acce_format_data_t
 	unsigned int pkts_read;
 	u_char *l2h;				//l2 header for current packet
 	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
+	pthread_t thread;
 };
 
 struct acce_format_data_out_t 
@@ -217,6 +219,8 @@ static int on_new_session(struct xio_session *session,
 
 static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 {
+	debug("%s() - ENTER \n", __func__);
+
         struct xio_iovec_ex     *sglist = vmsg_sglist(&req->in);
         char                    *str;
         int                     nents = vmsg_sglist_nents(&req->in);
@@ -247,8 +251,10 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 #endif
 	for (i = 0; i < nents; i++)	//it should be always 1, as we set in client part
 	{
+		debug("process_request: in loop(), nents: %d \n", nents);
 		str = (char *)sglist[i].iov_base;
 		len = sglist[i].iov_len;
+		debug("process_request. str: %p, len: %d\n", str, len);
 		if (str) 
 		{	//copy ptr and len
 			dt->pkt = malloc(len);
@@ -271,8 +277,9 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
         req->in.header.iov_base   = NULL;
         req->in.header.iov_len    = 0;
         vmsg_sglist_set_nents(&req->in, 0);
-}
 
+	debug("%s() - EXIT\n", __func__);
+}
 
 static int on_request(struct xio_session *session,
                       struct xio_msg *req,
@@ -287,8 +294,6 @@ static int on_request(struct xio_session *session,
         /* process request */
         process_request(server_data, req);
 
-
-
 //XXX - are we going to send responses back or not?
         /* attach request to response */
 #if 0
@@ -296,6 +301,8 @@ static int on_request(struct xio_session *session,
         xio_send_response(rsp);		
         server_data->nsent++;
 #endif
+
+	debug("on_request() - EXIT\n");
 
         return 0;
 }
@@ -358,7 +365,7 @@ static char* acce_server()
 	{
 		memset(server, 0x0, SERVER_LEN);
 		strcpy(server, ACCE_SERVER);
-		debug("no ACCE_SERVER var found. default server will be used\n");
+		debug("no ACCELIO_SERVER var found. default server will be used\n");
 	}
 
 	debug("full server address: %s \n", server);
@@ -396,6 +403,8 @@ static int acce_init_input(libtrace_t *libtrace)
         FORMAT(libtrace)->ctx = xio_context_create(NULL, 0, -1);
 
         sprintf(url, "rdma://%s:%s", acce_server(), ACCE_PORT);
+
+	debug("%s() url: %s\n", __func__, url);
 
 	/* bind a listener server to a portal/url */
         FORMAT(libtrace)->server = xio_bind(FORMAT(libtrace)->ctx, &server_ops, url, NULL, 0, libtrace->format_data);
@@ -546,6 +555,8 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	/* create url to connect to */
         sprintf(url, "rdma://%s:%s", acce_server(), ACCE_PORT);
 
+	debug("%s() url: %s\n", __func__, url);
+
         params.type             = XIO_SESSION_CLIENT;
         params.ses_ops          = &ses_ops;
         params.user_context     = libtrace->format_data;	//XXX - check it later(was &session_data)
@@ -590,16 +601,35 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 	assert(0);
 }
 
-static int acce_start_input(libtrace_t *libtrace) 
-{
-	int ret = 0;
-	//libtrace = libtrace;
 
-	debug("%s() \n", __func__);
+
+//we run it in separate thread to not have blocking issues
+void* input_loop(void *arg)
+{
+	libtrace_t *libtrace = (libtrace_t*)arg;
 
 	xio_context_run_loop(FORMAT(libtrace)->ctx, XIO_INFINITE);
 
-	return ret;
+	return NULL;
+}
+
+static int acce_start_input(libtrace_t *libtrace) 
+{
+	int rv = 0;
+	
+	debug("%s() - ENTER \n", __func__);
+
+	rv = pthread_create(&FORMAT(libtrace)->thread, NULL, input_loop, libtrace);
+	if (rv)
+		error("failed to create a thread!\n");
+	else
+	{
+		debug("thread created successfully\n");
+	}
+
+	debug("%s() - EXIT\n", __func__);
+
+	return rv;
 }
 
 static int kafka_pstart_input(libtrace_t *libtrace) 
@@ -760,6 +790,8 @@ static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *p
 static int acce_read_pack(libtrace_t *libtrace)
 {
 	int numbytes;
+
+	debug("%s() \n", __func__);
 
 	while (1) 
 	{	//XXX - moved to start_input()
@@ -1386,7 +1418,7 @@ static struct libtrace_format_t acce = {
         acce_start_output,              /* start_output */
         acce_fin_input,	         	/* fin_input - Stops capture input data.*/
         acce_fin_output,                /* fin_output */
-        acce_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet */
+        acce_read_packet,        	/* read_packet - Reads next packet from input trace into the packet */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer with packet into a libtrace packet */
 	acce_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
         acce_write_packet,              /* write_packet - Write a libtrace packet to an output trace */

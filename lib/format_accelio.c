@@ -116,6 +116,7 @@ struct acce_format_data_out_t
 	int compress_type;			//store compression type here: bz2, gz etc
 	int fileflag;
 	iow_t *file;
+	pthread_t thread;
 };
 
 #if 1
@@ -603,8 +604,8 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 
 
 
-//we run it in separate thread to not have blocking issues
-void* input_loop(void *arg)
+//we run it in separate thread to avoid blocking issues
+static void* input_loop(void *arg)
 {
 	libtrace_t *libtrace = (libtrace_t*)arg;
 
@@ -672,9 +673,29 @@ static int acce_pause_input(libtrace_t * libtrace)
 	return 0;
 }
 
+//we run it in separate thread to avoid blocking issues
+static void* output_loop(void *arg)
+{
+	libtrace_t *libtrace = (libtrace_t*)arg;
+
+	xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
+
+	return NULL;
+}
+
 static int acce_start_output(libtrace_out_t *libtrace) 
 {
+	int rv; 
+
 	debug("%s() \n", __func__);
+
+	rv = pthread_create(&OUTPUT->thread, NULL, output_loop, libtrace);
+	if (rv)
+		error("failed to create a thread!\n");
+	else
+	{
+		debug("thread created successfully\n");
+	}
 
 	//wandio_wcreate() called inside
 	OUTPUT->file = trace_open_file_out(libtrace, OUTPUT->compress_type, OUTPUT->level, OUTPUT->fileflag);
@@ -687,7 +708,7 @@ static int acce_start_output(libtrace_out_t *libtrace)
 	{
 		debug("opened out file with wandio successfully\n");
 	}
-	return 0;
+	return rv;
 }
 
 static int acce_fin_input(libtrace_t *libtrace) 
@@ -1201,10 +1222,13 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	//sending
 	xio_send_request(OUTPUT->conn, req);
 
+	//XXX - moved to separate thread
 	/* event dispatcher is now running */
-        xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);	//XXX - maybe bad idea to wait infinitely
+        //xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
 
 	//freeing packet memory
+	//XXX - should free it in some other place
+#if 0
 	free(req->out.header.iov_base);
 	if ((int)len < OUTPUT->max_msg_size) 
 		free(req->out.data_iov.sglist[0].iov_base);
@@ -1213,6 +1237,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
                 xio_mem_free(&xbuf);
                 xbuf.addr = NULL;
         }
+#endif
 
 	//end of accelio part ---------
 

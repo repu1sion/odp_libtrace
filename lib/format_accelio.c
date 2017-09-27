@@ -676,7 +676,7 @@ static int acce_pause_input(libtrace_t * libtrace)
 //we run it in separate thread to avoid blocking issues
 static void* output_loop(void *arg)
 {
-	libtrace_t *libtrace = (libtrace_t*)arg;
+	libtrace_out_t *libtrace = (libtrace_out_t*)arg;
 
 	xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
 

@@ -106,6 +106,7 @@ struct acce_format_data_out_t
 	//accelio vars
 	struct xio_context *ctx;
         struct xio_connection *conn;
+	struct xio_session *session;
 	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
 	int req_cnt;
         uint64_t cnt;
@@ -289,6 +290,9 @@ static int on_request(struct xio_session *session,
                       void *cb_user_context)
 {
 	debug("on_request()\n");
+
+	session = session;
+	last_in_rxq = last_in_rxq; 
 
         struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
         //struct xio_msg     *rsp = ring_get_next_msg(server_data);
@@ -518,7 +522,6 @@ static int kafka_init_input(libtrace_t *libtrace)
 //Initialises an output trace using the capture format.
 static int acce_init_output(libtrace_out_t *libtrace) 
 {
-	struct xio_session *session;
 	struct xio_session_params params;
 	struct xio_connection_params cparams;
 	int queue_depth; 
@@ -565,9 +568,9 @@ static int acce_init_output(libtrace_out_t *libtrace)
         params.user_context     = libtrace->format_data;	//XXX - check it later(was &session_data)
         params.uri              = url;
 
-        session = xio_session_create(&params);
+        OUTPUT->session = xio_session_create(&params);
 
-	cparams.session                 = session;                                                                     
+	cparams.session                 = OUTPUT->session;
         cparams.ctx                     = OUTPUT->ctx;                                                            
         cparams.conn_user_context       = libtrace->format_data;	//XXX - check it later(was &session_data)
                                                                                                                        
@@ -746,10 +749,18 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 {
 	debug("%s() \n", __func__);
 
-	/* free the context */
+	debug("%s() dstr connection\n", __func__);
+	xio_connection_destroy(OUTPUT->conn);
+	debug("%s() dstr session\n", __func__);
+	xio_session_destroy(OUTPUT->session);
+	debug("%s() dstr context loop\n", __func__);
+	xio_context_stop_loop(OUTPUT->ctx);
+	debug("%s() dstr context\n", __func__);
         xio_context_destroy(OUTPUT->ctx);
+	debug("%s() dstr xio\n", __func__);
         xio_shutdown();
 
+	debug("%s() dstr wandio\n", __func__);
 	wandio_wdestroy(OUTPUT->file);
 
 	free(libtrace->format_data);
@@ -994,8 +1005,10 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 //need to get struct per_stream from thread and use its pointers
 static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 {
-	int numbytes;
+	//int numbytes;
 	kafka_per_stream_t *stream = t->format_data;
+	libtrace = libtrace;
+	stream = stream;
 
 #if 0
 	while (1) 
@@ -1182,7 +1195,7 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s() \n", __func__);
+	debug("%s(), cnt:%d \n", __func__, OUTPUT->req_cnt);
 
 	int numbytes = 0;
 	struct xio_reg_mem xbuf;
@@ -1257,6 +1270,9 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		trace_set_err_out(libtrace, errno, "Writing packet failed");
 		return -1;
 	}
+
+	usleep(10000);
+
 	return numbytes;
 }
 

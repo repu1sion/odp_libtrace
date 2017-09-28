@@ -106,7 +106,8 @@ struct acce_format_data_out_t
 	//accelio vars
 	struct xio_context *ctx;
         struct xio_connection *conn;
-	struct xio_msg req_ring;		//could be a buffer, but let's store a single msg here
+	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
+	int req_cnt;
         uint64_t cnt;
         int max_msg_size;
 	
@@ -532,6 +533,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 	memset(&OUTPUT->req_ring, 0x0, sizeof(struct xio_msg));
+	OUTPUT->req_cnt = 0;
 
 	memset(&params, 0, sizeof(params));
 	//init accelio ---------------------------------------------------------
@@ -1185,7 +1187,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	int numbytes = 0;
 	struct xio_reg_mem xbuf;
 	uint8_t *data = NULL;
-	struct xio_msg *req = &OUTPUT->req_ring;
+	struct xio_msg *req = &OUTPUT->req_ring[OUTPUT->req_cnt];
 	size_t len = trace_get_capture_length(packet);
 
 	//sending accelio message -----
@@ -1200,7 +1202,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	/* data */
 	if ((int)len < OUTPUT->max_msg_size) 
 	{ 	/* small msgs - just set iov_base to packet pointer*/
-		req->out.data_iov.sglist[0].iov_base = packet->payload;
+		req->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - memcpy here?
 	} 
 	else 
 	{ 	/* big msgs */
@@ -1221,6 +1223,11 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	//sending
 	xio_send_request(OUTPUT->conn, req);
+
+	OUTPUT->req_cnt++;
+	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
+		OUTPUT->req_cnt = 0;
+
 
 	//XXX - moved to separate thread
 	/* event dispatcher is now running */

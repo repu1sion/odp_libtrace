@@ -749,6 +749,7 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 {
 	debug("%s() \n", __func__);
 
+	xio_disconnect(OUTPUT->conn);
 	debug("%s() dstr connection\n", __func__);
 	xio_connection_destroy(OUTPUT->conn);
 	debug("%s() dstr session\n", __func__);

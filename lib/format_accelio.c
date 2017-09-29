@@ -101,6 +101,7 @@ struct acce_format_data_out_t
 	int req_cnt;
         uint64_t cnt;
         int max_msg_size;
+	unsigned char conn_established;
 	
 	//other vars
 	char *path;
@@ -137,7 +138,11 @@ static int on_session_event_client(struct xio_session *session,
 
         switch (event_data->event) 
 	{
+	case XIO_SESSION_CONNECTION_ESTABLISHED_EVENT:
+		session_data->conn_established = 1;
+		break;
         case XIO_SESSION_CONNECTION_TEARDOWN_EVENT:
+		session_data->conn_established = 0;
                 xio_connection_destroy(event_data->conn);
                 break;
         case XIO_SESSION_TEARDOWN_EVENT:
@@ -527,6 +532,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 	memset(&OUTPUT->req_ring, 0x0, sizeof(struct xio_msg));
 	OUTPUT->req_cnt = 0;
+	OUTPUT->conn_established = 0;
 
 	memset(&params, 0, sizeof(params));
 	//init accelio ---------------------------------------------------------
@@ -534,6 +540,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
         xio_init();
         /* get minimal queue depth */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
+	debug("accelio queue depth: %d\n", opt);
         queue_depth = ACCE_QUEUE_DEPTH > opt ? opt : ACCE_QUEUE_DEPTH;
 	debug("queue_depth: %d\n", queue_depth);
 
@@ -1194,6 +1201,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 {
 	debug("%s(), cnt:%d \n", __func__, OUTPUT->req_cnt);
 
+	int i = 0;
 	int numbytes = 0;
 	struct xio_reg_mem xbuf;
 	uint8_t *data = NULL;
@@ -1230,18 +1238,24 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	req->out.data_iov.sglist[0].iov_len = len + 1;
 	req->out.data_iov.nents = 1;
-
+	
+	//sleep here till we have event, that connection established
+	while (!OUTPUT->conn_established)
+	{
+		usleep(10000);
+		if (i++ % 100)
+		{
+			debug("waiting for connection\n");
+		}
+	}
+	
+	
 	//sending
 	xio_send_request(OUTPUT->conn, req);
 
 	OUTPUT->req_cnt++;
 	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
 		OUTPUT->req_cnt = 0;
-
-
-	//XXX - moved to separate thread
-	/* event dispatcher is now running */
-        //xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
 
 	//freeing packet memory
 	//XXX - should free it in some other place

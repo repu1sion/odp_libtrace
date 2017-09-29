@@ -23,21 +23,11 @@
 
 #define WIRELEN_DROPLEN 4
 
-//acce config
+//----- CONFIG -----
 #define ACCE_QUEUE_DEPTH	512
 #define ACCE_SERVER 		"localhost"
-#define ACCE_PORT 		"9992"		//XXX - change it
+#define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
-
-//old stuff
-#define TOPIC_LEN 512
-#define HOSTNAME_LEN 256
-#define BROKER_LEN 512
-#define GROUP_LEN 512
-#define ERR_LEN 512
-
-//----- CONFIG -----
-
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
@@ -141,7 +131,7 @@ static int on_session_event_client(struct xio_session *session,
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)
                                                 cb_user_context;
 
-        printf("session event: %s. reason: %s\n",
+        printf("client session event: %s. reason: %s\n",
                xio_session_event_str(event_data->event),
                xio_strerror(event_data->reason));
 
@@ -177,7 +167,7 @@ static int on_session_event_server(struct xio_session *session,
 {
         struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
 
-        printf("session event: %s. session:%p, connection:%p, reason: %s\n",
+        printf("server session event: %s. session:%p, connection:%p, reason: %s\n",
                xio_session_event_str(event_data->event),
                session, event_data->conn,
                xio_strerror(event_data->reason));
@@ -607,8 +597,6 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 	assert(0);
 }
 
-
-
 //we run it in separate thread to avoid blocking issues
 static void* input_loop(void *arg)
 {
@@ -749,13 +737,21 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 {
 	debug("%s() \n", __func__);
 
+	debug("%s() disconnect\n", __func__);
 	xio_disconnect(OUTPUT->conn);
+
+	//wait till we get events
+	usleep(200000);
+
+#if 0
 	debug("%s() dstr connection\n", __func__);
 	xio_connection_destroy(OUTPUT->conn);
 	debug("%s() dstr session\n", __func__);
 	xio_session_destroy(OUTPUT->session);
 	debug("%s() dstr context loop\n", __func__);
 	xio_context_stop_loop(OUTPUT->ctx);
+#endif
+
 	debug("%s() dstr context\n", __func__);
         xio_context_destroy(OUTPUT->ctx);
 	debug("%s() dstr xio\n", __func__);

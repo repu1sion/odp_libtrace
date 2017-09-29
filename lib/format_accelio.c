@@ -1243,7 +1243,8 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	while (!OUTPUT->conn_established)
 	{
 		usleep(10000);
-		if (i++ % 100)
+		//show debug every second
+		if (!(i++ % 100))
 		{
 			debug("waiting for connection\n");
 		}
@@ -1282,7 +1283,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		return -1;
 	}
 
-	usleep(10000);
+	//usleep(10000);
 
 	return numbytes;
 }

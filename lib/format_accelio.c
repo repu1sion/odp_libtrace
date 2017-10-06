@@ -112,7 +112,7 @@ struct acce_format_data_out_t
 	pthread_t thread;
 };
 
-#if 1
+#if 0
 typedef struct kafka_per_stream_s 
 {
 	int id;
@@ -160,7 +160,7 @@ static int on_session_event_client(struct xio_session *session,
 static struct xio_session_ops ses_ops = {
         .on_session_event               =  on_session_event_client, 
         .on_session_established         =  NULL,
-        .on_msg                         =  NULL,		//XXX - add callback
+        .on_msg                         =  NULL,		//XXX - add response callback?
         .on_msg_error                   =  NULL
 };
 
@@ -381,14 +381,10 @@ static int acce_init_input(libtrace_t *libtrace)
 
 	debug("%s() \n", __func__);
 
-	kafka_per_stream_t stream;
-	memset(&stream, 0x0, sizeof(kafka_per_stream_t));
-
-	//init all the data in kafka_format_data_t
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
-
+	FORMAT(libtrace)->per_stream = NULL;
         /* initialize library */
 	//init accelio ---------------------------------------------------------
         xio_init();
@@ -412,107 +408,6 @@ static int acce_init_input(libtrace_t *libtrace)
 
 	return rv;
 }
-
-/* Initialises an input trace using the capture format. 
-   @param libtrace 	The input trace to be initialised */
-#if 0
-static int kafka_init_input(libtrace_t *libtrace) 
-{
-	int rv;
-
-	debug("%s() \n", __func__);
-
-	kafka_per_stream_t stream;
-	memset(&stream, 0x0, sizeof(kafka_per_stream_t));
-
-	//init all the data in kafka_format_data_t
-	libtrace->format_data = malloc(sizeof(struct kafka_format_data_t));
-	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
-	FORMAT(libtrace)->pkts_read = 0;
-
-	/* Make our first stream */
-	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(kafka_per_stream_t));
-	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
-
-	//init kafka
-		FORMAT(libtrace)->partition = 0;
-	//strcpy(FORMAT(libtrace)->topic, KAFKA_TOPIC);
-	strcpy(FORMAT(libtrace)->topic, kafka_hostname());
-
-	strcpy(FORMAT(libtrace)->brokers, kafka_broker());
-	memset(FORMAT(libtrace)->errstr, 0x0, sizeof(FORMAT(libtrace)->errstr));
-
-	FORMAT(libtrace)->conf = rd_kafka_conf_new();
-        rd_kafka_conf_set(FORMAT(libtrace)->conf, "compression.codec", KAFKA_COMPRESSION,
-		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
-        //the min numb of messages to wait for to accumulate before sending
-        rd_kafka_conf_set(FORMAT(libtrace)->conf, "batch.num.messages", KAFKA_BATCH_MSGS,
-		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
-        rd_kafka_conf_set(FORMAT(libtrace)->conf, "queue.buffering.max.ms", KAFKA_BUFFERING_MS,
-		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
-
-        //topic configuration
-        FORMAT(libtrace)->topic_conf = rd_kafka_topic_conf_new();
-
-	//------------------------------ below is setup similar to librdkafka example --------------------
-	/* Consumer groups require a group id */
-	debug("setting group\n");
-	if (rd_kafka_conf_set(FORMAT(libtrace)->conf, "group.id", kafka_group(), FORMAT(libtrace)->errstr,
-		sizeof(FORMAT(libtrace)->errstr)) != RD_KAFKA_CONF_OK)
-	{
-		fprintf(stderr, "%% %s\n", FORMAT(libtrace)->errstr);
-		exit(1);
-	}
-
-	/* Consumer groups always use broker based offset storage */
-	if (rd_kafka_topic_conf_set(FORMAT(libtrace)->topic_conf, "offset.store.method", "broker",
-		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr)) != RD_KAFKA_CONF_OK) 
-	{
-		fprintf(stderr, "%% %s\n", FORMAT(libtrace)->errstr);
-		exit(1);
-	}
-
-	/* Set default topic config for pattern-matched topics. */
-	rd_kafka_conf_set_default_topic_conf(FORMAT(libtrace)->conf, FORMAT(libtrace)->topic_conf);
-
-	//-------------------------------------------------------------------------------------------------
-
-        //----- create kafka handle -----
-        FORMAT(libtrace)->rk = rd_kafka_new(RD_KAFKA_CONSUMER, FORMAT(libtrace)->conf, 
-		FORMAT(libtrace)->errstr, sizeof(FORMAT(libtrace)->errstr));
-        if (!FORMAT(libtrace)->rk)
-        {
-                fprintf(stderr, "%% Failed to create new producer: %s\n", FORMAT(libtrace)->errstr);
-                exit(1);
-        }
-
-        rd_kafka_set_log_level(FORMAT(libtrace)->rk, LOG_DEBUG);
-
-        //add brokers
-        if (!rd_kafka_brokers_add(FORMAT(libtrace)->rk, FORMAT(libtrace)->brokers))
-        {
-                fprintf(stderr, "%% No valid brokers specified\n");
-                exit(1);
-        }
-
-
-
-        /* Redirect rd_kafka_poll() to consumer_poll() */
-	rd_kafka_poll_set_consumer(FORMAT(libtrace)->rk);
-
-	rv = kafka_init_consume(libtrace);
-	if (!rv)
-	{
-		debug("no topics found in env variables - will use default one \n");
-	}
-	else
-	{
-		debug("found and subscribed to %d topics \n", rv);
-	}
-
-	return 0;
-}
-#endif
 
 //Initialises an output trace using the capture format.
 static int acce_init_output(libtrace_out_t *libtrace) 
@@ -636,6 +531,8 @@ static int acce_start_input(libtrace_t *libtrace)
 static int kafka_pstart_input(libtrace_t *libtrace) 
 {
 	int ret = 0;
+	libtrace = libtrace;
+#if 0
 	int i;
 	kafka_per_stream_t *stream;
 	kafka_per_stream_t empty_stream;
@@ -654,7 +551,7 @@ static int kafka_pstart_input(libtrace_t *libtrace)
 		stream = libtrace_list_get_index(FORMAT(libtrace)->per_stream, i)->data;
 		stream->id = i;
 	}
-
+#endif
 	return ret;
 }
 	
@@ -715,6 +612,11 @@ static int acce_fin_input(libtrace_t *libtrace)
 {
 	debug("%s() \n", __func__);
 
+	debug("%s() freeing accelio resources\n", __func__);
+	xio_unbind(FORMAT(libtrace)->server);
+        xio_context_destroy(FORMAT(libtrace)->ctx);
+        xio_shutdown();
+
 	if (libtrace->io)
 	{
 		wandio_destroy(libtrace->io);
@@ -730,11 +632,6 @@ static int acce_fin_input(libtrace_t *libtrace)
 		libtrace->format_data = NULL;
 	}
 
-	xio_unbind(FORMAT(libtrace)->server);
-        xio_context_destroy(FORMAT(libtrace)->ctx);
-        xio_shutdown();
-
-
 	debug("%s() exiting\n", __func__);
 
 	return 0;
@@ -747,7 +644,7 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 	debug("%s() disconnect\n", __func__);
 	xio_disconnect(OUTPUT->conn);
 
-	//wait till we get events
+	//wait till we get events. XXX - add events processing here to not just sleep?
 	usleep(200000);
 
 #if 0
@@ -820,9 +717,7 @@ static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *p
 }
 
 /* internal function (not a registered format routine).
- * with ODP_SCHED_NO_WAIT we always skip to a next iteration with 'continue'
- * but anyway we have a forever loop here till get a new packet */
-
+ * we have a forever loop here till get a new packet */
 
 //in callback process packet and save it into our struct. set flag we got packet
 static int acce_read_pack(libtrace_t *libtrace)
@@ -832,9 +727,7 @@ static int acce_read_pack(libtrace_t *libtrace)
 	debug("%s() \n", __func__);
 
 	while (1) 
-	{	//XXX - moved to start_input()
-		//xio_context_run_loop(FORMAT(libtrace)->ctx, 100); //XXX - make it shorter, 10ms?
-
+	{
 		//if we got Ctrl-C from one of our utilities, etc
 		if (libtrace_halt)
 		{
@@ -1010,9 +903,8 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 {
 	//int numbytes;
-	kafka_per_stream_t *stream = t->format_data;
+	//kafka_per_stream_t *stream = t->format_data;
 	libtrace = libtrace;
-	stream = stream;
 
 #if 0
 	while (1) 
@@ -1116,6 +1008,10 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
 {
 	int pkts_read = 0;
+	trace = trace;
+	t = t;
+#if 0
+
 	int numbytes = 0;
 	uint32_t flags = 0;
 	unsigned int i;
@@ -1183,6 +1079,7 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 
 	debug("%s() exit with pkts_read : %d \n", __func__, pkts_read);
 
+#endif
 	return pkts_read;
 }
 
@@ -1243,13 +1140,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	while (!OUTPUT->conn_established)
 	{
 		usleep(10000);
-		//show debug every second
+		//show debug for a first time, and then every second
 		if (!(i++ % 100))
 		{
 			debug("waiting for connection\n");
 		}
 	}
-	
 	
 	//sending
 	xio_send_request(OUTPUT->conn, req);
@@ -1287,6 +1183,40 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	return numbytes;
 }
+
+/** Returns the next libtrace event for the input trace.
+ *
+ * @param trace		The input trace to get the next event from
+ * @param packet	A libtrace packet to read a packet into
+ * @return A libtrace event describing the event that occured
+ *
+ * The event API allows for non-blocking reading of packets from an
+ * input trace. If a packet is available and ready to be read, a packet
+ * event should be returned. Otherwise a sleep or fd event should be
+ * returned to indicate that the caller needs to wait. If the input
+ * trace has an error or reaches EOF, a terminate event should be
+ * returned.
+ */
+static struct libtrace_eventobj_t acce_trace_event(libtrace_t *trace, libtrace_packet_t *packet)
+{
+	struct libtrace_eventobj_t event;
+	int len = 0;
+	
+	memset(&event, 0x0, sizeof(struct libtrace_eventobj_t));
+
+	//XXX - get len of packet. then copy packet into *packet
+//	len = 
+
+	event.type = TRACE_EVENT_PACKET;
+	event.fd = -1; //XXX - should it be -1?
+	event.seconds = 0.0f;
+	event.size = len;
+	
+	
+
+	return event;
+}
+
 
 //Returns the payload length of the captured packet record
 //We use the value we got from odp and stored in FORMAT(libtrace)->pkt_len
@@ -1502,7 +1432,7 @@ static struct libtrace_format_t acce = {
 	NULL,				/* get_dropped_packets */
 	NULL,				/* get_statistics */
         NULL,                           /* get_fd */
-        NULL,              		/* trace_event */
+        acce_trace_event,              	/* trace_event */
         lodp_help,                     	/* help */
         NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */

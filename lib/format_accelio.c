@@ -960,6 +960,7 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			{
 				numbytes = pkt->len;
 				debug("have packet with len %d, left in queue: %d \n", numbytes, queue_num);
+				break;
 			}
 		}
 		usleep(1);	//let's sleep minimal interval

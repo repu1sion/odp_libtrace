@@ -1201,7 +1201,7 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s(), cnt:%d \n", __func__, OUTPUT->req_cnt);
+	debug("%s(), cnt:%d \n", __func__, OUTPUT->req_cnt + 1); //so we output a correct counter
 
 	int i = 0;
 	int numbytes = 0;
@@ -1238,7 +1238,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		req->out.data_iov.sglist[0].iov_base = data;
 	}
 
-	req->out.data_iov.sglist[0].iov_len = len + 1;
+	req->out.data_iov.sglist[0].iov_len = len;
 	req->out.data_iov.nents = 1;
 	
 	//sleep here till we have event, that connection established

@@ -85,7 +85,8 @@ struct acce_format_data_t
 	int pkt_len;				//length of current packet
 	u_char got_pkt;				//set to 1 if we have packet
 	int pvt;				//for private data saving
-	unsigned int pkts_read;
+	unsigned int pkts_read;			//read by libtrace
+	unsigned int pkts_rcvd;			//received via accelio but not read yet
 	u_char *l2h;				//l2 header for current packet
 	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
 	pthread_t thread;
@@ -124,6 +125,65 @@ typedef struct kafka_per_stream_s
 } kafka_per_stream_t;
 #endif
 
+//queue implementation----------------------------------------------------------
+typedef struct pckt_s
+{
+        void *ptr;
+        int len;
+        struct pckt_s *next;
+} pckt_t;
+
+pckt_t *queue_head = NULL;
+pckt_t *queue_tail = NULL;
+int queue_num = 0;
+
+static void queue_add(pckt_t *pkt)
+{
+        if (!queue_head)
+        {
+                queue_head = pkt;
+                queue_tail = pkt;
+        }
+        else
+        {
+                queue_tail->next = pkt;
+                queue_tail = pkt;
+        }
+        pkt->next = NULL;
+        queue_num++;
+}
+
+static pckt_t* queue_de()
+{
+        pckt_t *deq = NULL;
+
+        if (queue_head)
+        {
+                deq = queue_head;
+                if (queue_head != queue_tail)
+                {
+                        queue_head = queue_head->next;
+                }
+                else
+                {
+                        queue_head = queue_tail = NULL;
+                }
+                queue_num--;
+                return deq;
+        }
+        else
+                return NULL;
+}
+
+static pckt_t* queue_create_pckt()
+{
+	pckt_t *p = malloc(sizeof (pckt_t));
+	if (!p)
+		return NULL;
+	else
+		memset(p, 0x0, sizeof (pckt_t));
+	return p;
+}
 
 static int on_session_event_client(struct xio_session *session,
                             struct xio_session_event_data *event_data,
@@ -219,10 +279,11 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 {
 	debug("%s() - ENTER \n", __func__);
 
-        struct xio_iovec_ex     *sglist = vmsg_sglist(&req->in);
-        char                    *str;
-        int                     nents = vmsg_sglist_nents(&req->in);
-        int                     len, i;
+        struct xio_iovec_ex *sglist = vmsg_sglist(&req->in);
+        char *str;
+	pckt_t *pkt = NULL;
+        int nents = vmsg_sglist_nents(&req->in);
+        int len, i;
         //char                    tmp;
 
         /* note all data is packed together so in order to print each
@@ -254,11 +315,25 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 		len = sglist[i].iov_len;
 		debug("process_request. str: %p, len: %d\n", str, len);
 		if (str) 
-		{	//copy ptr and len
+		{	
+			pkt = queue_create_pckt();
+			if (!pkt)
+				error("failed to allocate RAM for a new packet!\n");
+			else
+			{
+				pkt->ptr = sglist[i].iov_base;
+				pkt->len = sglist[i].iov_len;
+				queue_add(pkt);
+				dt->pkts_rcvd++;
+				//dt->got_pkt = 1;	//we signal that we have packet
+				debug("packet added to queue\n");
+			}	
+#if 0	
 			dt->pkt = malloc(len);
 			memcpy(dt->pkt, str, len);
 			dt->pkt_len = len;
 			dt->got_pkt = 1;	//we signal that we have packet
+#endif
 #if 0
 			if (((unsigned)len) > 64)
 				len = 64;
@@ -384,6 +459,7 @@ static int acce_init_input(libtrace_t *libtrace)
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
+	FORMAT(libtrace)->pkts_rcvd = 0;
 	FORMAT(libtrace)->per_stream = NULL;
         /* initialize library */
 	//init accelio ---------------------------------------------------------
@@ -719,6 +795,7 @@ static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *p
 /* internal function (not a registered format routine).
  * we have a forever loop here till get a new packet */
 
+#if 0
 //in callback process packet and save it into our struct. set flag we got packet
 static int acce_read_pack(libtrace_t *libtrace)
 {
@@ -735,15 +812,13 @@ static int acce_read_pack(libtrace_t *libtrace)
 			return READ_EOF;
 		}
 
-		if (FORMAT(libtrace)->got_pkt)
+		if (queue_num)
 		{
-			FORMAT(libtrace)->got_pkt = 0;
 			numbytes = FORMAT(libtrace)->pkt_len;
 			debug("have packet with len %d \n", numbytes);
 			return numbytes;
 		}
 
-		usleep(10000);	//10ms
 	}
 
 #if 0
@@ -829,7 +904,7 @@ static int acce_read_pack(libtrace_t *libtrace)
 	/* We'll NEVER get here */
 	return READ_ERROR;
 }
-
+#endif
 
 /* Reads the next packet from an input trace into the provided packet 
  * structure.
@@ -850,6 +925,7 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 {
 	uint32_t flags = 0;
 	int numbytes = 0;
+	pckt_t *pkt = NULL;
 	
 	debug("%s() \n", __func__);
 
@@ -868,10 +944,30 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	packet->type = TRACE_RT_DATA_ODP;
 
 	//#2. Read a packet from input. We wait here forever till packet appears.
-	numbytes = acce_read_pack(libtrace);
+	while (1) 
+	{
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
+		if (queue_num)
+		{
+			pkt = queue_de();
+			if (pkt)
+			{
+				numbytes = pkt->len;
+				debug("have packet with len %d, left in queue: %d \n", numbytes, queue_num);
+			}
+		}
+		usleep(1);	//let's sleep minimal interval
+	}
+
 	if (numbytes == -1) 
 	{
-		trace_set_err(libtrace, errno, "Reading odp packet failed");
+		trace_set_err(libtrace, errno, "Reading packet failed");
 		return -1;
 	}
 	else if (numbytes == 0)
@@ -880,10 +976,10 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	//#3. Get pointer from packet and assign it to packet->buffer
 	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		packet->buffer = FORMAT(libtrace)->pkt;
-		packet->capture_length = FORMAT(libtrace)->pkt_len;
+		packet->buffer = pkt->ptr;
+		packet->capture_length = pkt->len;
 		packet->payload = packet->buffer;
-		packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+		packet->wire_length = pkt->len + WIRELEN_DROPLEN;
 		//-----
 		debug("pointer to packet: %p \n", packet->buffer);
                 if (!packet->buffer) 
@@ -895,11 +991,16 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 
 	if (lodp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
 		return -1;
+
+	//we don't need a queue packet cover anymore, but we keep ptr to packet and len
+	//in packet->buffer and packet->capture_length
+	free(pkt);
 	
 	return numbytes;
 }
 
 //need to get struct per_stream from thread and use its pointers
+#if 0
 static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 {
 	//int numbytes;
@@ -990,6 +1091,7 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
 	/* We'll NEVER get here */
 	return READ_ERROR;
 }
+#endif
 
 /**
  * Read a batch of packets from the input stream related to thread.
@@ -1005,6 +1107,7 @@ static int kafka_pread_pack(libtrace_t *libtrace, libtrace_thread_t *t UNUSED)
  * interrupted due to message waiting before packets had been read.
  */
 //we mostly read 10 packets in loop and then exit, this is how actually function works
+#if 0
 static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
 {
 	int pkts_read = 0;
@@ -1082,6 +1185,7 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 #endif
 	return pkts_read;
 }
+#endif
 
 static void acce_fin_packet(libtrace_packet_t *packet)
 {
@@ -1201,6 +1305,10 @@ static struct libtrace_eventobj_t acce_trace_event(libtrace_t *trace, libtrace_p
 {
 	struct libtrace_eventobj_t event;
 	int len = 0;
+	trace = trace;
+	packet = packet;
+
+	debug("%s() \n", __func__);
 	
 	memset(&event, 0x0, sizeof(struct libtrace_eventobj_t));
 
@@ -1437,7 +1545,7 @@ static struct libtrace_format_t acce = {
         NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	kafka_pstart_input,              /* pstart_input */
-	kafka_pread_packets,             /* pread_packets */
+	NULL,             		/* pread_packets */
 	acce_pause_input,               /* ppause */
 	acce_fin_input,                 /* p_fin */
 	lodp_pregister_thread,          /* pregister_thread */

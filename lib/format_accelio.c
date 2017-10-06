@@ -1194,7 +1194,8 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		free(packet->buffer);
+		//XXX - we should free accelio internal resources as this ptr leads to iov_base now
+		//free(packet->buffer);
 		packet->buffer = NULL;
 	}
 }

@@ -137,7 +137,7 @@ pckt_t *queue_head = NULL;
 pckt_t *queue_tail = NULL;
 int queue_num = 0;
 
-static void queue_add(pckt_t *pkt)
+static int queue_add(pckt_t *pkt)
 {
         if (!queue_head)
         {
@@ -151,6 +151,8 @@ static void queue_add(pckt_t *pkt)
         }
         pkt->next = NULL;
         queue_num++;
+
+	return queue_num;
 }
 
 static pckt_t* queue_de()
@@ -283,7 +285,7 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
         char *str;
 	pckt_t *pkt = NULL;
         int nents = vmsg_sglist_nents(&req->in);
-        int len, i;
+        int len, num, i;
         //char                    tmp;
 
         /* note all data is packed together so in order to print each
@@ -323,10 +325,10 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 			{
 				pkt->ptr = sglist[i].iov_base;
 				pkt->len = sglist[i].iov_len;
-				queue_add(pkt);
+				num = queue_add(pkt);
 				dt->pkts_rcvd++;
 				//dt->got_pkt = 1;	//we signal that we have packet
-				debug("packet added to queue\n");
+				debug("packet added to queue. now in queue: %d \n", num);
 			}	
 #if 0	
 			dt->pkt = malloc(len);

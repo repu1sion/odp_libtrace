@@ -503,7 +503,8 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
-	memset(&OUTPUT->req_ring, 0x0, sizeof(struct xio_msg));
+	memset(OUTPUT->req_ring, 0x0, sizeof(struct xio_msg) * ACCE_QUEUE_DEPTH);
+	OUTPUT->cnt = 0;
 	OUTPUT->req_cnt = 0;
 	OUTPUT->conn_established = 0;
 
@@ -1204,7 +1205,7 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s(), cnt:%d \n", __func__, OUTPUT->req_cnt + 1); //so we output a correct counter
+	debug("%s() idx:%d, total packets: %lu \n", __func__, OUTPUT->req_cnt, OUTPUT->cnt);
 
 	int i = 0;
 	int numbytes = 0;
@@ -1225,13 +1226,13 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	/* data */
 	if ((int)len < OUTPUT->max_msg_size) 
 	{ 	/* small msgs - just set iov_base to packet pointer*/
-		req->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - memcpy here?
+		req->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
 	} 
 	else 
 	{ 	/* big msgs */
 		if (data == NULL) 
 		{
-			printf("allocating xio memory...\n");
+			debug("allocating xio memory...\n");
 			xio_mem_alloc(len, &xbuf);
 			data = (uint8_t *)xbuf.addr;
 			memset(data, 0x0, len);
@@ -1261,6 +1262,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	OUTPUT->req_cnt++;
 	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
 		OUTPUT->req_cnt = 0;
+	OUTPUT->cnt++;
 
 	//freeing packet memory
 	//XXX - should free it in some other place

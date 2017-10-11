@@ -24,7 +24,7 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_QUEUE_DEPTH	512
+#define ACCE_QUEUE_DEPTH	1024
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
@@ -136,9 +136,11 @@ typedef struct pckt_s
 pckt_t *queue_head = NULL;
 pckt_t *queue_tail = NULL;
 int queue_num = 0;
+pthread_mutex_t queue_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 static int queue_add(pckt_t *pkt)
 {
+	pthread_mutex_lock(&queue_mtx);
         if (!queue_head)
         {
                 queue_head = pkt;
@@ -151,6 +153,7 @@ static int queue_add(pckt_t *pkt)
         }
         pkt->next = NULL;
         queue_num++;
+	pthread_mutex_unlock(&queue_mtx);
 
 	return queue_num;
 }
@@ -159,6 +162,7 @@ static pckt_t* queue_de()
 {
         pckt_t *deq = NULL;
 
+	pthread_mutex_lock(&queue_mtx);
         if (queue_head)
         {
                 deq = queue_head;
@@ -171,10 +175,14 @@ static pckt_t* queue_de()
                         queue_head = queue_tail = NULL;
                 }
                 queue_num--;
+		pthread_mutex_unlock(&queue_mtx);
                 return deq;
         }
         else
+	{
+		pthread_mutex_unlock(&queue_mtx);
                 return NULL;
+	}
 }
 
 static pckt_t* queue_create_pckt()
@@ -328,7 +336,8 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 				num = queue_add(pkt);
 				dt->pkts_rcvd++;
 				//dt->got_pkt = 1;	//we signal that we have packet
-				debug("packet added to queue. now in queue: %d \n", num);
+				debug("packet added to queue. now in queue: %d, pkts_rcvd: %u \n",
+					num, dt->pkts_rcvd);
 			}	
 #if 0	
 			dt->pkt = malloc(len);
@@ -1289,7 +1298,8 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		return -1;
 	}
 
-	//usleep(10000);
+	//helps to avoid lot of issues
+	usleep(10000);
 
 	return numbytes;
 }

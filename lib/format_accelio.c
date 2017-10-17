@@ -78,6 +78,8 @@ struct acce_format_data_t
 	struct xio_server       *server;        /* server portal */
 	struct xio_context      *ctx;
         struct xio_connection   *conn;
+	struct xio_msg rsp_ring[ACCE_QUEUE_DEPTH];	//ring buffer for responses
+	int ring_cnt;
         int max_msg_size;
 
 	//other vars
@@ -87,6 +89,7 @@ struct acce_format_data_t
 	int pvt;				//for private data saving
 	unsigned int pkts_read;			//read by libtrace
 	unsigned int pkts_rcvd;			//received via accelio but not read yet
+	int rsp_cnt;				//number of responses sent
 	u_char *l2h;				//l2 header for current packet
 	libtrace_list_t *per_stream;		//pointer to the whole list structure: head, tail, size etc inside.
 	pthread_t thread;
@@ -98,8 +101,9 @@ struct acce_format_data_out_t
 	struct xio_context *ctx;
         struct xio_connection *conn;
 	struct xio_session *session;
-	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
+	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer for requests
 	int req_cnt;
+	int resp_rcvd;					//count responses
         uint64_t cnt;
         int max_msg_size;
 	unsigned char conn_established;
@@ -226,11 +230,49 @@ static int on_session_event_client(struct xio_session *session,
         return 0;
 }
 
+static int on_response(struct xio_session *session, struct xio_msg *rsp, int last_in_rxq, void *cb_user_context)
+{
+	session = session;
+	last_in_rxq = last_in_rxq;
+	struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*) cb_user_context;
+	struct xio_msg      *req = rsp;
+                                                                        
+	session_data->resp_rcvd++;
+
+	debug("got response: #%d \n", session_data->resp_rcvd);
+                                                                                        
+        /* process the incoming message - in example we just do printf, so skipping */                                                                             
+        //process_response(session_data, rsp);                                                                           
+                                                                                                                       
+        /* acknowledge xio that response is no longer needed */                                                        
+        xio_release_response(rsp);                                                                                     
+                
+#if 0                                                                                                       
+        if (test_disconnect) {                                                                                         
+                if (session_data->nrecv == DISCONNECT_NR) {                                                            
+                        xio_disconnect(session_data->conn);                                                            
+                        return 0;                                                                                      
+                }                                                                                                      
+                if (session_data->nsent == DISCONNECT_NR)                                                              
+                        return 0;                                                                                      
+        }                                                                                                              
+#endif
+        req->in.header.iov_base   = NULL;                                                                              
+        req->in.header.iov_len    = 0;                                                                                 
+        vmsg_sglist_set_nents(&req->in, 0);                                                                            
+                                                                                                                       
+        /* resend the message */                                                                                       
+        xio_send_request(session_data->conn, req);                                                                     
+        //session_data->nsent++;                                                                                         
+                                                                                                                       
+        return 0;                                                                                                      
+}    
+
 //callbacks for accelio client (output)
 static struct xio_session_ops ses_ops = {
         .on_session_event               =  on_session_event_client, 
         .on_session_established         =  NULL,
-        .on_msg                         =  NULL,		//XXX - add response callback?
+        .on_msg                         =  on_response,
         .on_msg_error                   =  NULL
 };
 
@@ -365,6 +407,16 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 	debug("%s() - EXIT\n", __func__);
 }
 
+static inline struct xio_msg *ring_get_next_msg(struct acce_format_data_t *sd)
+{
+        struct xio_msg *msg = &sd->rsp_ring[sd->ring_cnt++];
+
+        if (sd->ring_cnt == ACCE_QUEUE_DEPTH)
+                sd->ring_cnt = 0;
+
+        return msg;
+}
+
 static int on_request(struct xio_session *session,
                       struct xio_msg *req,
                       int last_in_rxq,
@@ -376,18 +428,15 @@ static int on_request(struct xio_session *session,
 	last_in_rxq = last_in_rxq; 
 
         struct acce_format_data_t *server_data = (struct acce_format_data_t*)cb_user_context;
-        //struct xio_msg     *rsp = ring_get_next_msg(server_data);
+        struct xio_msg *rsp = ring_get_next_msg(server_data);
 
         /* process request */
         process_request(server_data, req);
 
-//XXX - are we going to send responses back or not?
         /* attach request to response */
-#if 0
         rsp->request = req;
         xio_send_response(rsp);		
-        server_data->nsent++;
-#endif
+        server_data->rsp_cnt++;
 
 	debug("on_request() - EXIT\n");
 
@@ -463,11 +512,14 @@ static int acce_init_input(libtrace_t *libtrace)
 {
 	int rv = 0;
 	int opt, optlen;
+	int i;
 	char url[256] = {0};
+	struct xio_msg *rsp;
 
 	debug("%s() \n", __func__);
 
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
+	memset(libtrace->format_data, 0x0, sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
 	FORMAT(libtrace)->pkts_rcvd = 0;
@@ -483,6 +535,55 @@ static int acce_init_input(libtrace_t *libtrace)
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
         FORMAT(libtrace)->max_msg_size = opt;
 
+	//filling ring buffer of responses
+	memset(FORMAT(libtrace)->rsp_ring, 0x0, sizeof(struct xio_msg) * ACCE_QUEUE_DEPTH);
+        rsp = FORMAT(libtrace)->rsp_ring;
+        for (i = 0; i < ACCE_QUEUE_DEPTH; i++) 
+	{
+                /* header */
+                rsp->out.header.iov_base =
+                        strdup("hello world header response");
+                rsp->out.header.iov_len =
+                        strlen((const char *)
+                                rsp->out.header.iov_base) + 1;
+
+                rsp->out.sgl_type          = XIO_SGL_TYPE_IOV;
+                rsp->out.data_iov.max_nents = XIO_IOVLEN;
+
+                /* data */
+#if 0
+                if (msg_size < max_msg_size) { /* small msgs */
+#endif
+                        rsp->out.data_iov.sglist[0].iov_base =
+                                strdup("hello world data response");
+#if 0
+                } else { /* big msgs */
+                        if (data == NULL) {
+                                printf("allocating xio memory...\n");
+                                xio_mem_alloc(msg_size, &xbuf);
+                                if (xbuf.addr != NULL){
+                                        data = (uint8_t *)xbuf.addr;
+                                        memset(data, 0, msg_size);
+                                        sprintf((char *)data, "hello world data response");
+                                } else {
+                                        printf("ERROR - xio_mem_alloc failed.\n");
+                                        exit(1);
+                                }
+                        }
+                        rsp->out.data_iov.sglist[0].mr = xbuf.mr;
+                        rsp->out.data_iov.sglist[0].iov_base = data;
+                }
+#endif
+
+                rsp->out.data_iov.sglist[0].iov_len =
+                        strlen((const char *)
+                               rsp->out.data_iov.sglist[0].iov_base) + 1;
+
+                rsp->out.data_iov.nents = 1;
+
+                rsp++;
+        }
+	
 	/* create thread context for the client */
         FORMAT(libtrace)->ctx = xio_context_create(NULL, 0, -1);
 
@@ -508,6 +609,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	debug("%s() \n", __func__);
 
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_out_t));
+	memset(libtrace->format_data, 0x0, sizeof(struct acce_format_data_out_t));
 	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
@@ -587,6 +689,7 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 	assert(0);
 }
 
+#if 0
 //we run it in separate thread to avoid blocking issues
 static void* input_loop(void *arg)
 {
@@ -596,13 +699,16 @@ static void* input_loop(void *arg)
 
 	return NULL;
 }
+#endif
 
 static int acce_start_input(libtrace_t *libtrace) 
 {
 	int rv = 0;
+	libtrace = libtrace;
 	
 	debug("%s() - ENTER \n", __func__);
 
+#if 0
 	rv = pthread_create(&FORMAT(libtrace)->thread, NULL, input_loop, libtrace);
 	if (rv)
 		error("failed to create a thread!\n");
@@ -610,6 +716,7 @@ static int acce_start_input(libtrace_t *libtrace)
 	{
 		debug("thread created successfully\n");
 	}
+#endif
 
 	debug("%s() - EXIT\n", __func__);
 
@@ -658,6 +765,7 @@ static int acce_pause_input(libtrace_t * libtrace)
 	return 0;
 }
 
+#if 0
 //we run it in separate thread to avoid blocking issues
 static void* output_loop(void *arg)
 {
@@ -667,13 +775,15 @@ static void* output_loop(void *arg)
 
 	return NULL;
 }
+#endif
 
 static int acce_start_output(libtrace_out_t *libtrace) 
 {
-	int rv; 
+	int rv = 0; 
 
 	debug("%s() \n", __func__);
 
+#if 0
 	rv = pthread_create(&OUTPUT->thread, NULL, output_loop, libtrace);
 	if (rv)
 		error("failed to create a thread!\n");
@@ -681,6 +791,7 @@ static int acce_start_output(libtrace_out_t *libtrace)
 	{
 		debug("thread created successfully\n");
 	}
+#endif
 
 	//wandio_wcreate() called inside
 	OUTPUT->file = trace_open_file_out(libtrace, OUTPUT->compress_type, OUTPUT->level, OUTPUT->fileflag);
@@ -965,6 +1076,8 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			return READ_EOF;
 		}
 
+		xio_context_run_loop(FORMAT(libtrace)->ctx, 10);
+
 		if (queue_num)
 		{
 			pkt = queue_de();
@@ -975,7 +1088,7 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 				break;
 			}
 		}
-		usleep(1);	//let's sleep minimal interval
+		//usleep(1);	//let's sleep minimal interval
 	}
 
 	if (numbytes == -1) 
@@ -1273,6 +1386,9 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		OUTPUT->req_cnt = 0;
 	OUTPUT->cnt++;
 
+	//run for 10ms
+	xio_context_run_loop(OUTPUT->ctx, 10);
+
 	//freeing packet memory
 	//XXX - should free it in some other place
 #if 0
@@ -1299,7 +1415,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	}
 
 	//helps to avoid lot of issues
-	usleep(10000);
+	//usleep(10000);
 
 	return numbytes;
 }

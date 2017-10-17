@@ -1366,7 +1366,11 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	req->out.data_iov.sglist[0].iov_len = len;
 	req->out.data_iov.nents = 1;
-	
+
+	//must be placed before! checking that connection established (as we getting events here)	
+	//run for 10ms
+	xio_context_run_loop(OUTPUT->ctx, 10);
+
 	//sleep here till we have event, that connection established
 	while (!OUTPUT->conn_established)
 	{
@@ -1386,8 +1390,6 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		OUTPUT->req_cnt = 0;
 	OUTPUT->cnt++;
 
-	//run for 10ms
-	xio_context_run_loop(OUTPUT->ctx, 10);
 
 	//freeing packet memory
 	//XXX - should free it in some other place

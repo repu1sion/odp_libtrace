@@ -195,42 +195,81 @@ static pckt_t* queue_create_pckt()
 	return p;
 }
 
+//----------------- client callbacks -------------------------------------------
 static int on_session_event_client(struct xio_session *session,
                             struct xio_session_event_data *event_data,
                             void *cb_user_context)
 {
-        struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)
-                                                cb_user_context;
+        struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
         printf("client session event: %s. reason: %s\n",
-               xio_session_event_str(event_data->event),
-               xio_strerror(event_data->reason));
+               xio_session_event_str(event_data->event), xio_strerror(event_data->reason));
 
         switch (event_data->event) 
 	{
-	case XIO_SESSION_CONNECTION_ESTABLISHED_EVENT:
-		session_data->conn_established = 1;
-		break;
-        case XIO_SESSION_CONNECTION_TEARDOWN_EVENT:
-		session_data->conn_established = 0;
-                xio_connection_destroy(event_data->conn);
-                break;
-        case XIO_SESSION_TEARDOWN_EVENT:
-                xio_session_destroy(session);
-                xio_context_stop_loop(session_data->ctx);  /* exit */
-                break;
-        default:
-                break;
+		case XIO_SESSION_CONNECTION_ESTABLISHED_EVENT:
+			session_data->conn_established = 1;
+			break;
+		case XIO_SESSION_CONNECTION_TEARDOWN_EVENT:
+			session_data->conn_established = 0;
+			xio_connection_destroy(event_data->conn);
+			break;
+		case XIO_SESSION_TEARDOWN_EVENT:
+			xio_session_destroy(session);
+			xio_context_stop_loop(session_data->ctx);  /* exit */
+			break;
+		default:
+			break;
         };
 
         return 0;
 }
 
+static int on_msg_send_complete_client(struct xio_session *session, 
+					struct xio_msg *msg, void *cb_user_context)
+{
+        struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
+
+        //struct test_params *test_params = (struct test_params *)cb_user_context;
+        //process_message(test_params, msg);
+
+
+        /* can be safely freed */
+        //msg_pool_put(test_params->pool, msg);
+
+        /* peek message from the pool */
+        //msg = msg_pool_get(test_params->pool);
+
+
+        /* reset message */
+        msg->in.header.iov_base = NULL;                                                                                
+        msg->in.header.iov_len  = 0;
+        msg->in.data_iov.nents  = 0;
+
+        /* assign buffers to the message */                                             
+        //msg_build_out_sgl(&test_params->msg_params, msg, test_config.hdr_len, 1, test_config.data_len);
+
+        msg->flags = 0;
+
+        if (xio_send_msg(session_data->conn, msg) == -1) {
+                if (xio_errno() != EAGAIN)
+                        printf("**** [%p] Error - xio_send_request " \
+                                        "failed %s\n",
+                                        session,
+                                        xio_strerror(xio_errno()));
+        }
+
+        return 0;
+}
+   
+
+
 //callbacks for accelio client (output)
 static struct xio_session_ops ses_ops = {
         .on_session_event               =  on_session_event_client, 
+	.on_ow_msg_send_complete        =  on_msg_send_complete_client,
         .on_session_established         =  NULL,
-        .on_msg                         =  NULL,		//XXX - add response callback?
+        .on_msg                         =  NULL,
         .on_msg_error                   =  NULL
 };
 
@@ -534,6 +573,12 @@ static int acce_init_output(libtrace_out_t *libtrace)
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
         OUTPUT->max_msg_size = opt;
 	debug("max_msg_size : %d\n", OUTPUT->max_msg_size);
+
+	//MSG API init ---------------------------------------------------------
+	/* prepare buffers */
+
+
+	//END of MSG API init --------------------------------------------------
 
         /* create thread context for the client */
         OUTPUT->ctx = xio_context_create(NULL, 0, -1);
@@ -1220,10 +1265,10 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	int numbytes = 0;
 	struct xio_reg_mem xbuf;
 	uint8_t *data = NULL;
-	struct xio_msg *req = &OUTPUT->req_ring[OUTPUT->req_cnt];
+	struct xio_msg *msg = &OUTPUT->req_ring[OUTPUT->req_cnt];
 	size_t len = trace_get_capture_length(packet);
 
-	//sending accelio message -----
+#if 0
 	req->out.header.iov_base = strdup("accelio header request");
 	req->out.header.iov_len = strlen((const char *)req->out.header.iov_base) + 1;
 	/* iovec[0]*/
@@ -1231,11 +1276,29 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	req->in.data_iov.max_nents = XIO_IOVLEN;
 	req->out.sgl_type = XIO_SGL_TYPE_IOV;
 	req->out.data_iov.max_nents = XIO_IOVLEN;
+#endif
+
+	//MSG SETUP
+	memset(msg, 0x0, sizeof(struct xio_msg));
+	msg->type = XIO_MSG_TYPE_ONE_WAY;
+	msg->flags = 0x0;
+	//set msg->in just to be sure, as we set msg->out with real data
+	msg->in.header.iov_base = NULL;
+	msg->in.header.iov_len  = 0;
+	vmsg_sglist_set_nents(&msg->in, 0);
+	msg->in.sgl_type = XIO_SGL_TYPE_IOV;
+	msg->in.data_iov.max_nents = XIO_IOVLEN;
+
+	//set msg->out
+	msg->out.sgl_type = XIO_SGL_TYPE_IOV;
+	msg->out.data_iov.max_nents = XIO_IOVLEN;
+	msg->out.header.iov_base = strdup("msg header");
+	msg->out.header.iov_len = strlen((const char *)msg->out.header.iov_base) + 1;
 
 	/* data */
 	if ((int)len < OUTPUT->max_msg_size) 
 	{ 	/* small msgs - just set iov_base to packet pointer*/
-		req->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
+		msg->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
 	} 
 	else 
 	{ 	/* big msgs */
@@ -1247,12 +1310,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 			memset(data, 0x0, len);
 			memcpy(data, packet->payload, len);
 		}
-		req->out.data_iov.sglist[0].mr = xbuf.mr;
-		req->out.data_iov.sglist[0].iov_base = data;
+		msg->out.data_iov.sglist[0].mr = xbuf.mr;
+		msg->out.data_iov.sglist[0].iov_base = data;
 	}
 
-	req->out.data_iov.sglist[0].iov_len = len;
-	req->out.data_iov.nents = 1;
+	msg->out.data_iov.sglist[0].iov_len = len;
+	msg->out.data_iov.nents = 1;
 	
 	//sleep here till we have event, that connection established
 	while (!OUTPUT->conn_established)
@@ -1265,16 +1328,24 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		}
 	}
 	
+	if (xio_send_msg(OUTPUT->conn, msg) == -1) 
+	{
+		if (xio_errno() != EAGAIN)
+		{
+			printf("[%p] Error - xio_send_request failed. %s\n",
+				OUTPUT->session, xio_strerror(xio_errno()));
+			return -1;
+		}
+	}
+
 	//sending
-	xio_send_request(OUTPUT->conn, req);
+	//xio_send_request(OUTPUT->conn, req);
 
 	OUTPUT->req_cnt++;
 	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
 		OUTPUT->req_cnt = 0;
 	OUTPUT->cnt++;
 
-	//freeing packet memory
-	//XXX - should free it in some other place
 #if 0
 	free(req->out.header.iov_base);
 	if ((int)len < OUTPUT->max_msg_size) 

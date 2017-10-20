@@ -228,6 +228,9 @@ static int on_session_event_client(struct xio_session *session,
 static int on_msg_send_complete_client(struct xio_session *session, 
 					struct xio_msg *msg, void *cb_user_context)
 {
+
+	debug("%s() - ENTER \n", __func__);
+
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
         //struct test_params *test_params = (struct test_params *)cb_user_context;
@@ -262,8 +265,6 @@ static int on_msg_send_complete_client(struct xio_session *session,
         return 0;
 }
    
-
-
 //callbacks for accelio client (output)
 static struct xio_session_ops ses_ops = {
         .on_session_event               =  on_session_event_client, 
@@ -364,39 +365,22 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 		len = sglist[i].iov_len;
 		debug("process_request. str: %p, len: %d\n", str, len);
 		if (str) 
-		{	
+		{
 			pkt = queue_create_pckt();
 			if (!pkt)
 				error("failed to allocate RAM for a new packet!\n");
 			else
 			{
-				pkt->ptr = sglist[i].iov_base;
 				pkt->len = sglist[i].iov_len;
+				pkt->ptr = malloc(len);
+				memcpy(pkt->ptr, sglist[i].iov_base, pkt->len);
 				num = queue_add(pkt);
 				dt->pkts_rcvd++;
-				//dt->got_pkt = 1;	//we signal that we have packet
 				debug("packet added to queue. now in queue: %d, pkts_rcvd: %u \n",
 					num, dt->pkts_rcvd);
 			}	
-#if 0	
-			dt->pkt = malloc(len);
-			memcpy(dt->pkt, str, len);
-			dt->pkt_len = len;
-			dt->got_pkt = 1;	//we signal that we have packet
-#endif
-#if 0
-			if (((unsigned)len) > 64)
-				len = 64;
-			tmp = str[len];
-			str[len] = '\0';
-			printf("message data: [%llu][%d][%d] - %s\n",
-			       (unsigned long long)(req->sn + 1),
-			       i, len, str);
-			str[len] = tmp;
-#endif
 		}
 	}
-        //server_data->cnt = 0;
         req->in.header.iov_base   = NULL;
         req->in.header.iov_len    = 0;
         vmsg_sglist_set_nents(&req->in, 0);
@@ -404,10 +388,8 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 	debug("%s() - EXIT\n", __func__);
 }
 
-static int on_request(struct xio_session *session,
-                      struct xio_msg *req,
-                      int last_in_rxq,
-                      void *cb_user_context)
+static int on_request(struct xio_session *session, struct xio_msg *req,
+			int last_in_rxq, void *cb_user_context)
 {
 	debug("on_request()\n");
 
@@ -420,13 +402,7 @@ static int on_request(struct xio_session *session,
         /* process request */
         process_request(server_data, req);
 
-//XXX - are we going to send responses back or not?
-        /* attach request to response */
-#if 0
-        rsp->request = req;
-        xio_send_response(rsp);		
-        server_data->nsent++;
-#endif
+	xio_release_msg(req);
 
 	debug("on_request() - EXIT\n");
 

@@ -254,6 +254,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
 
         msg->flags = 0;
 
+#if 0
         if (xio_send_msg(session_data->conn, msg) == -1) {
                 if (xio_errno() != EAGAIN)
                         printf("**** [%p] Error - xio_send_request " \
@@ -261,6 +262,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
                                         session,
                                         xio_strerror(xio_errno()));
         }
+#endif
 
         return 0;
 }
@@ -1235,7 +1237,7 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s() idx:%d, total packets: %lu \n", __func__, OUTPUT->req_cnt, OUTPUT->cnt);
+	debug("%s() idx:%d, total packets: %lu \n", __func__, OUTPUT->req_cnt, OUTPUT->cnt+1);
 
 	int i = 0;
 	int numbytes = 0;

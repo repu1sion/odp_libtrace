@@ -100,6 +100,7 @@ struct acce_format_data_out_t
 	struct xio_session *session;
 	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
 	int req_cnt;
+        uint64_t rcvd_cb_cnt;				//received callbacks
         uint64_t cnt;
         int max_msg_size;
 	unsigned char conn_established;
@@ -228,10 +229,10 @@ static int on_session_event_client(struct xio_session *session,
 static int on_msg_send_complete_client(struct xio_session *session, 
 					struct xio_msg *msg, void *cb_user_context)
 {
-
-	debug("%s() - ENTER \n", __func__);
-
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
+
+	session_data->rcvd_cb_cnt++;
+	debug("%s() rcvd: %lu \n", __func__, session_data->rcvd_cb_cnt);
 
         //struct test_params *test_params = (struct test_params *)cb_user_context;
         //process_message(test_params, msg);
@@ -532,6 +533,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	memset(OUTPUT->req_ring, 0x0, sizeof(struct xio_msg) * ACCE_QUEUE_DEPTH);
 	OUTPUT->cnt = 0;
 	OUTPUT->req_cnt = 0;
+	OUTPUT->rcvd_cb_cnt = 0;
 	OUTPUT->conn_established = 0;
 
 	memset(&params, 0, sizeof(params));
@@ -1348,7 +1350,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	}
 
 	//helps to avoid lot of issues
-	usleep(10000);
+	usleep(5000);
 
 	return numbytes;
 }

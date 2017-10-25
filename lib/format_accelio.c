@@ -329,7 +329,7 @@ static int on_new_session(struct xio_session *session,
 
 static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 {
-	debug("%s() - ENTER \n", __func__);
+	debug("%s() - ENTER. sn: %lu \n", __func__, req->sn);
 
         struct xio_iovec_ex *sglist = vmsg_sglist(&req->in);
         char *str;

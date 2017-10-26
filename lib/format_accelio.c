@@ -1000,7 +1000,7 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 				break;
 			}
 		}
-		usleep(1);	//let's sleep minimal interval
+		//usleep(1);	//let's sleep minimal interval
 	}
 
 	if (numbytes == -1) 
@@ -1281,7 +1281,10 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		msg->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
 	} 
 	else 
-	{ 	/* big msgs */
+	{
+		//XXX: HACK - we should not have packets > 8192...
+		return -1;
+	 	/* big msgs */
 		if (data == NULL) 
 		{
 			debug("allocating xio memory...\n");
@@ -1312,7 +1315,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	{
 		if (xio_errno() != EAGAIN)
 		{
-			printf("[%p] Error - xio_send_request failed. %s\n",
+			printf("[%p] Error - xio_send_msg failed. %s\n",
 				OUTPUT->session, xio_strerror(xio_errno()));
 			return -1;
 		}

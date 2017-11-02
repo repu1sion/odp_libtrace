@@ -777,10 +777,10 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 	debug("%s() \n", __func__);
 
 	debug("%s() disconnect\n", __func__);
-	xio_disconnect(OUTPUT->conn);
+        //XXX: wait, do not send disconnect event
+        sleep(5);
 
-	//wait till we get events. XXX - add events processing here to not just sleep?
-	usleep(200000);
+	xio_disconnect(OUTPUT->conn);
 
 #if 0
 	debug("%s() dstr connection\n", __func__);
@@ -1375,7 +1375,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	}
 
 	//helps to avoid lot of issues
-	usleep(5000);
+	usleep(100);
 
 	return numbytes;
 }

@@ -24,14 +24,14 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_QUEUE_DEPTH	1024
+#define ACCE_QUEUE_DEPTH	2048
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-#define DEBUG
+//#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -137,11 +137,12 @@ typedef struct pckt_s
 pckt_t *queue_head = NULL;
 pckt_t *queue_tail = NULL;
 int queue_num = 0;
-pthread_mutex_t queue_mtx = PTHREAD_MUTEX_INITIALIZER;
+int pshared;
+pthread_spinlock_t queue_lock; //= PTHREAD_SPINLOCK_INITIALIZER;
 
 static int queue_add(pckt_t *pkt)
 {
-	pthread_mutex_lock(&queue_mtx);
+	pthread_spin_lock(&queue_lock);
         if (!queue_head)
         {
                 queue_head = pkt;
@@ -154,7 +155,7 @@ static int queue_add(pckt_t *pkt)
         }
         pkt->next = NULL;
         queue_num++;
-	pthread_mutex_unlock(&queue_mtx);
+	pthread_spin_unlock(&queue_lock);
 
 	return queue_num;
 }
@@ -163,7 +164,8 @@ static pckt_t* queue_de()
 {
         pckt_t *deq = NULL;
 
-	pthread_mutex_lock(&queue_mtx);
+	pthread_spin_trylock(&queue_lock);
+	//pthread_spin_lock(&queue_lock);
         if (queue_head)
         {
                 deq = queue_head;
@@ -176,12 +178,12 @@ static pckt_t* queue_de()
                         queue_head = queue_tail = NULL;
                 }
                 queue_num--;
-		pthread_mutex_unlock(&queue_mtx);
+		pthread_spin_unlock(&queue_lock);
                 return deq;
         }
         else
 	{
-		pthread_mutex_unlock(&queue_mtx);
+		pthread_spin_unlock(&queue_lock);
                 return NULL;
 	}
 }
@@ -485,6 +487,8 @@ static int acce_init_input(libtrace_t *libtrace)
 
 	debug("%s() \n", __func__);
 
+	pthread_spin_init(&queue_lock, pshared);
+
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
@@ -500,6 +504,15 @@ static int acce_init_input(libtrace_t *libtrace)
            are called as opposed to to big msgs where rdma_write/rdma_read are called */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
         FORMAT(libtrace)->max_msg_size = opt;
+
+	opt = ACCE_QUEUE_DEPTH;	
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
+
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
+	printf("accelio queue send depth: %d\n", opt);
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, &optlen);
+	printf("accelio queue rcv depth: %d\n", opt);
 
 	/* create thread context for the client */
         FORMAT(libtrace)->ctx = xio_context_create(NULL, 0, -1);
@@ -540,11 +553,20 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	//init accelio ---------------------------------------------------------
 	/* initialize library */
         xio_init();
+
+	//set options
+	opt = ACCE_QUEUE_DEPTH;	
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
+
         /* get minimal queue depth */
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
-	debug("accelio queue depth: %d\n", opt);
+	printf("accelio queue snd depth: %d\n", opt);
         queue_depth = ACCE_QUEUE_DEPTH > opt ? opt : ACCE_QUEUE_DEPTH;
 	debug("queue_depth: %d\n", queue_depth);
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, &optlen);
+	printf("accelio queue rcv depth: %d\n", opt);
+
 
         /* get max msg size */
         /* this size distinguishes between big and small msgs, where for small msgs

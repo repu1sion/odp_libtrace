@@ -24,7 +24,7 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_QUEUE_DEPTH	2048
+#define ACCE_QUEUE_DEPTH	16384
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
@@ -538,6 +538,8 @@ static int acce_init_output(libtrace_out_t *libtrace)
 
 	debug("%s() \n", __func__);
 
+	memset(&cparams, 0x0, sizeof(struct xio_connection_params));
+
 	libtrace->format_data = malloc(sizeof(struct acce_format_data_out_t));
 	OUTPUT->file = NULL;
 	OUTPUT->level = 0;
@@ -600,6 +602,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	cparams.session                 = OUTPUT->session;
         cparams.ctx                     = OUTPUT->ctx;                                                            
         cparams.conn_user_context       = libtrace->format_data;	//XXX - check it later(was &session_data)
+	cparams.out_addr                = NULL;				//prevents segfault on accelio for_next branch
                                                                                                                        
         /* connect the session  */                                                                                     
         OUTPUT->conn = xio_connect(&cparams);
@@ -1305,6 +1308,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	else 
 	{
 		//XXX: HACK - we should not have packets > 8192...
+		error("packet > 8192 bytes !!!\n");
 		return -1;
 	 	/* big msgs */
 		if (data == NULL) 

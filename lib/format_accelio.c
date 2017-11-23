@@ -24,14 +24,14 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_QUEUE_DEPTH	2048
+#define ACCE_QUEUE_DEPTH	131072
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-//#define DEBUG
+#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -100,8 +100,8 @@ struct acce_format_data_out_t
 	struct xio_session *session;
 	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
 	int req_cnt;
-        uint64_t rcvd_cb_cnt;				//received callbacks
-        uint64_t cnt;
+        int rcvd_cb_cnt;				//received callbacks
+        int sent_cnt;
         int max_msg_size;
 	unsigned char conn_established;
 	
@@ -139,6 +139,9 @@ pckt_t *queue_tail = NULL;
 int queue_num = 0;
 int pshared;
 pthread_spinlock_t queue_lock; //= PTHREAD_SPINLOCK_INITIALIZER;
+pthread_mutex_t processed_mtx = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t theone_mtx = PTHREAD_MUTEX_INITIALIZER;		//only one packet-callback pair processed, then another
+pthread_mutex_t server_mtx = PTHREAD_MUTEX_INITIALIZER;		//per server callback
 
 static int queue_add(pckt_t *pkt)
 {
@@ -231,10 +234,13 @@ static int on_session_event_client(struct xio_session *session,
 static int on_msg_send_complete_client(struct xio_session *session, 
 					struct xio_msg *msg, void *cb_user_context)
 {
+
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
 	session_data->rcvd_cb_cnt++;
-	debug("%s() rcvd: %lu \n", __func__, session_data->rcvd_cb_cnt);
+	debug("%s() before lock rcvd: %d \n", __func__, session_data->rcvd_cb_cnt);
+	pthread_mutex_lock(&processed_mtx);
+	debug("%s() after lock rcvd: %d \n", __func__, session_data->rcvd_cb_cnt);
 
         //struct test_params *test_params = (struct test_params *)cb_user_context;
         //process_message(test_params, msg);
@@ -266,6 +272,9 @@ static int on_msg_send_complete_client(struct xio_session *session,
                                         xio_strerror(xio_errno()));
         }
 #endif
+	debug("%s() unlock rcvd: %d \n", __func__, session_data->rcvd_cb_cnt);
+	pthread_mutex_unlock(&processed_mtx);
+	pthread_mutex_unlock(&theone_mtx);
 
         return 0;
 }
@@ -398,6 +407,8 @@ static int on_request(struct xio_session *session, struct xio_msg *req,
 {
 	debug("on_request()\n");
 
+	pthread_mutex_lock(&server_mtx);
+
 	session = session;
 	last_in_rxq = last_in_rxq; 
 
@@ -408,6 +419,8 @@ static int on_request(struct xio_session *session, struct xio_msg *req,
         process_request(server_data, req);
 
 	xio_release_msg(req);
+
+	pthread_mutex_unlock(&server_mtx);
 
 	debug("on_request() - EXIT\n");
 
@@ -544,7 +557,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
 	memset(OUTPUT->req_ring, 0x0, sizeof(struct xio_msg) * ACCE_QUEUE_DEPTH);
-	OUTPUT->cnt = 0;
+	OUTPUT->sent_cnt = 0;
 	OUTPUT->req_cnt = 0;
 	OUTPUT->rcvd_cb_cnt = 0;
 	OUTPUT->conn_established = 0;
@@ -600,6 +613,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	cparams.session                 = OUTPUT->session;
         cparams.ctx                     = OUTPUT->ctx;                                                            
         cparams.conn_user_context       = libtrace->format_data;	//XXX - check it later(was &session_data)
+	cparams.out_addr		= NULL;
                                                                                                                        
         /* connect the session  */                                                                                     
         OUTPUT->conn = xio_connect(&cparams);
@@ -1261,7 +1275,12 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s() idx:%d, total packets: %lu \n", __func__, OUTPUT->req_cnt, OUTPUT->cnt+1);
+	debug("%s() idx:%d, before lock. \n", __func__, OUTPUT->req_cnt);
+
+	pthread_mutex_lock(&theone_mtx);
+	pthread_mutex_lock(&processed_mtx);
+
+	debug("%s() idx:%d, after lock. \n", __func__, OUTPUT->req_cnt);
 
 	int i = 0;
 	int numbytes = 0;
@@ -1269,6 +1288,10 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	uint8_t *data = NULL;
 	struct xio_msg *msg = &OUTPUT->req_ring[OUTPUT->req_cnt];
 	size_t len = trace_get_capture_length(packet);
+
+//	printf("packet diff: %d \n", OUTPUT->sent_cnt - OUTPUT->rcvd_cb_cnt);
+
+
 
 #if 0
 	req->out.header.iov_base = strdup("accelio header request");
@@ -1305,6 +1328,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	else 
 	{
 		//XXX: HACK - we should not have packets > 8192...
+		pthread_mutex_unlock(&processed_mtx);
 		return -1;
 	 	/* big msgs */
 		if (data == NULL) 
@@ -1333,6 +1357,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		}
 	}
 	
+	
 	if (xio_send_msg(OUTPUT->conn, msg) == -1) 
 	{
 		if (xio_errno() != EAGAIN)
@@ -1346,10 +1371,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	//sending
 	//xio_send_request(OUTPUT->conn, req);
 
+	debug("%s() idx:%d, sent: %d \n", __func__, OUTPUT->req_cnt, OUTPUT->sent_cnt+1);
+
 	OUTPUT->req_cnt++;
 	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
 		OUTPUT->req_cnt = 0;
-	OUTPUT->cnt++;
+	OUTPUT->sent_cnt++;
 
 #if 0
 	free(req->out.header.iov_base);
@@ -1371,11 +1398,16 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 				(int)trace_get_capture_length(packet)) 
 	{
 		trace_set_err_out(libtrace, errno, "Writing packet failed");
+		pthread_mutex_unlock(&processed_mtx);
 		return -1;
 	}
 
+
+	debug("%s() idx:%d, unlock. \n", __func__, OUTPUT->req_cnt);
+	pthread_mutex_unlock(&processed_mtx);
+
 	//helps to avoid lot of issues
-	usleep(100);
+	//usleep(100000);
 
 	return numbytes;
 }

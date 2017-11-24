@@ -98,8 +98,6 @@ struct acce_format_data_out_t
 	struct xio_context *ctx;
         struct xio_connection *conn;
 	struct xio_session *session;
-	struct xio_msg req_ring[ACCE_QUEUE_DEPTH];	//ring buffer
-	int req_cnt;
         uint64_t rcvd_cb_cnt;				//received callbacks
         uint64_t cnt;
         int max_msg_size;
@@ -138,7 +136,7 @@ pckt_t *queue_head = NULL;
 pckt_t *queue_tail = NULL;
 int queue_num = 0;
 int pshared;
-pthread_spinlock_t queue_lock; //= PTHREAD_SPINLOCK_INITIALIZER;
+pthread_spinlock_t queue_lock; //= pthread_spinlock_initializer;
 
 static int queue_add(pckt_t *pkt)
 {
@@ -198,6 +196,58 @@ static pckt_t* queue_create_pckt()
 	return p;
 }
 
+//------------------------ output queue ----------------------------------------
+pckt_t *o_queue_head = NULL;
+pckt_t *o_queue_tail = NULL;
+int o_queue_num = 0;
+pthread_mutex_t o_mutex_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int o_queue_add(pckt_t *pkt)
+{
+	pthread_mutex_lock(&o_mutex_lock);	//XXX - maybe trylock here so sending will have more priority?
+        if (!o_queue_head)
+        {
+                o_queue_head = pkt;
+                o_queue_tail = pkt;
+        }
+        else
+        {
+                o_queue_tail->next = pkt;
+                o_queue_tail = pkt;
+        }
+        pkt->next = NULL;
+        o_queue_num++;
+	pthread_mutex_unlock(&o_mutex_lock);
+
+	return o_queue_num;
+}
+
+//IMPORTANT: use mutex outside of o_queue_de() and call it in loop till the queue will be empty
+static pckt_t* o_queue_de()
+{
+        pckt_t *deq = NULL;
+
+        if (o_queue_head)
+        {
+                deq = o_queue_head;
+                if (o_queue_head != o_queue_tail)
+                {
+                        o_queue_head = o_queue_head->next;
+                }
+                else
+                {
+                        o_queue_head = o_queue_tail = NULL;
+                }
+                o_queue_num--;
+                return deq;
+        }
+        else
+	{
+                return NULL;
+	}
+}
+
+
 //----------------- client callbacks -------------------------------------------
 static int on_session_event_client(struct xio_session *session,
                             struct xio_session_event_data *event_data,
@@ -231,6 +281,7 @@ static int on_session_event_client(struct xio_session *session,
 static int on_msg_send_complete_client(struct xio_session *session, 
 					struct xio_msg *msg, void *cb_user_context)
 {
+	session = session;
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
 	session_data->rcvd_cb_cnt++;
@@ -256,6 +307,9 @@ static int on_msg_send_complete_client(struct xio_session *session,
         //msg_build_out_sgl(&test_params->msg_params, msg, test_config.hdr_len, 1, test_config.data_len);
 
         msg->flags = 0;
+
+	//now we can free the message ram
+	free(msg);
 
 #if 0
         if (xio_send_msg(session_data->conn, msg) == -1) {
@@ -379,7 +433,7 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 				pkt->len = sglist[i].iov_len;
 				pkt->ptr = malloc(len);
 				memcpy(pkt->ptr, sglist[i].iov_base, pkt->len);
-				num = queue_add(pkt);
+				num = queue_add(pkt); num = num;
 				dt->pkts_rcvd++;
 				debug("packet added to queue. now in queue: %d, pkts_rcvd: %u \n",
 					num, dt->pkts_rcvd);
@@ -545,9 +599,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->level = 0;
 	OUTPUT->compress_type = TRACE_OPTION_COMPRESSTYPE_NONE;
 	OUTPUT->fileflag = O_CREAT | O_WRONLY;
-	memset(OUTPUT->req_ring, 0x0, sizeof(struct xio_msg) * ACCE_QUEUE_DEPTH);
 	OUTPUT->cnt = 0;
-	OUTPUT->req_cnt = 0;
 	OUTPUT->rcvd_cb_cnt = 0;
 	OUTPUT->conn_established = 0;
 
@@ -565,6 +617,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, &optlen);
 	printf("accelio queue snd depth: %d\n", opt);
         queue_depth = ACCE_QUEUE_DEPTH > opt ? opt : ACCE_QUEUE_DEPTH;
+	queue_depth = queue_depth; 
 	debug("queue_depth: %d\n", queue_depth);
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, &optlen);
 	printf("accelio queue rcv depth: %d\n", opt);
@@ -712,8 +765,40 @@ static int acce_pause_input(libtrace_t * libtrace)
 static void* output_loop(void *arg)
 {
 	libtrace_out_t *libtrace = (libtrace_out_t*)arg;
+	pckt_t *pkt = NULL;
 
-	xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
+	while(1)
+	{
+		xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
+		//we get to this line once the stopping thread will call method xio_context_stop_loop()
+		pthread_mutex_lock(&o_mutex_lock);	//lock used outside loop to send all queue at once
+		while (o_queue_num)
+		{
+			pkt = o_queue_de();
+			if (pkt)
+			{
+				if (xio_send_msg(OUTPUT->conn, pkt->ptr) == -1) 
+				{
+					if (xio_errno() != EAGAIN)
+					{
+						error("[%p] Error - xio_send_msg failed. %s\n",
+							OUTPUT->session, xio_strerror(xio_errno()));
+						break;
+					}
+					else
+					{
+						error("some unknown accelio error. failed to send msg!\n");//XXX
+					}
+				}
+				else
+				{
+					debug("packet with sn: %lu sent successfully\n", pkt->ptr->sn);
+					free(pkt);
+				}
+			}
+		}
+		pthread_mutex_unlock(&o_mutex_lock);
+	}
 
 	return NULL;
 }
@@ -1264,13 +1349,15 @@ static void acce_fin_packet(libtrace_packet_t *packet)
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s() idx:%d, total packets: %lu \n", __func__, OUTPUT->req_cnt, OUTPUT->cnt+1);
+	debug("%s() total packets: %lu \n", __func__, OUTPUT->cnt+1);
 
 	int i = 0;
 	int numbytes = 0;
+	int num;
 	struct xio_reg_mem xbuf;
 	uint8_t *data = NULL;
-	struct xio_msg *msg = &OUTPUT->req_ring[OUTPUT->req_cnt];
+	struct xio_msg *msg = NULL;
+	pckt_t *pkt = NULL;
 	size_t len = trace_get_capture_length(packet);
 
 #if 0
@@ -1284,6 +1371,9 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 #endif
 
 	//MSG SETUP
+	msg = malloc(sizeof(struct xio_msg));
+	if (!msg)
+		{ error("failed to allocate RAM\n"); return -1; }
 	memset(msg, 0x0, sizeof(struct xio_msg));
 	msg->type = XIO_MSG_TYPE_ONE_WAY;
 	msg->flags = 0x0;
@@ -1336,7 +1426,24 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 			debug("waiting for connection\n");
 		}
 	}
+
+	//adding to queue
+	pkt = queue_create_pckt();
+	if (!pkt)
+		error("failed to allocate RAM for a new packet!\n");
+	else
+	{
+		pkt->len = len;
+		pkt->ptr = (void*)msg;
+		num = o_queue_add(pkt); num = num;
+		OUTPUT->cnt++;
+		debug("packet added to output queue. now in queue: %d, pkts went to sending: %u \n",
+			num, OUTPUT->cnt);
+	}
+	//XXX - maybe don't need to stop it here every packet, just once per 10 packets etc
+	xio_context_stop_loop(OUTPUT->ctx);
 	
+#if 0
 	if (xio_send_msg(OUTPUT->conn, msg) == -1) 
 	{
 		if (xio_errno() != EAGAIN)
@@ -1346,14 +1453,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 			return -1;
 		}
 	}
-
-	//sending
-	//xio_send_request(OUTPUT->conn, req);
-
-	OUTPUT->req_cnt++;
-	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
-		OUTPUT->req_cnt = 0;
-	OUTPUT->cnt++;
+#endif
 
 #if 0
 	free(req->out.header.iov_base);
@@ -1377,9 +1477,6 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		trace_set_err_out(libtrace, errno, "Writing packet failed");
 		return -1;
 	}
-
-	//helps to avoid lot of issues
-	usleep(100);
 
 	return numbytes;
 }

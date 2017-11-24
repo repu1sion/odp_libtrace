@@ -31,7 +31,7 @@
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-//#define DEBUG
+#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -766,6 +766,7 @@ static void* output_loop(void *arg)
 {
 	libtrace_out_t *libtrace = (libtrace_out_t*)arg;
 	pckt_t *pkt = NULL;
+	struct xio_msg *msg = NULL;
 
 	while(1)
 	{
@@ -792,7 +793,8 @@ static void* output_loop(void *arg)
 				}
 				else
 				{
-					debug("packet with sn: %lu sent successfully\n", pkt->ptr->sn);
+					msg = (struct xio_msg*)pkt->ptr; msg = msg;
+					debug("packet with sn: %lu sent successfully\n", msg->sn);
 					free(pkt);
 				}
 			}
@@ -1437,7 +1439,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		pkt->ptr = (void*)msg;
 		num = o_queue_add(pkt); num = num;
 		OUTPUT->cnt++;
-		debug("packet added to output queue. now in queue: %d, pkts went to sending: %u \n",
+		debug("packet added to output queue. now in queue: %d, pkts went to sending: %lu \n",
 			num, OUTPUT->cnt);
 	}
 	//XXX - maybe don't need to stop it here every packet, just once per 10 packets etc

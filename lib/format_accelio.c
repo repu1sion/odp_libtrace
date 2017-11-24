@@ -238,7 +238,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
 	session_data->rcvd_cb_cnt++;
-	debug("%s() before lock rcvd: %d \n", __func__, session_data->rcvd_cb_cnt);
+	debug("%s() before lock rcvd: %d , msg: %p, sn: %d\n", __func__, session_data->rcvd_cb_cnt, msg, msg->sn);
 	pthread_mutex_lock(&processed_mtx);
 	debug("%s() after lock rcvd: %d \n", __func__, session_data->rcvd_cb_cnt);
 
@@ -1373,10 +1373,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	debug("%s() idx:%d, sent: %d \n", __func__, OUTPUT->req_cnt, OUTPUT->sent_cnt+1);
 
-	OUTPUT->req_cnt++;
-	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
-		OUTPUT->req_cnt = 0;
-	OUTPUT->sent_cnt++;
+
 
 #if 0
 	free(req->out.header.iov_base);
@@ -1404,6 +1401,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 
 	debug("%s() idx:%d, unlock. \n", __func__, OUTPUT->req_cnt);
+
+	OUTPUT->req_cnt++;
+	if (OUTPUT->req_cnt == ACCE_QUEUE_DEPTH)
+		OUTPUT->req_cnt = 0;
+	OUTPUT->sent_cnt++;
+
 	pthread_mutex_unlock(&processed_mtx);
 
 	//helps to avoid lot of issues

@@ -140,6 +140,12 @@ pthread_spinlock_t queue_lock; //= pthread_spinlock_initializer;
 
 static int queue_add(pckt_t *pkt)
 {
+	if (!pkt)
+	{
+		error("trying to add to queue NULL pkt!\n");
+		return -1;
+	}
+
 	pthread_spin_lock(&queue_lock);
         if (!queue_head)
         {
@@ -167,11 +173,13 @@ static pckt_t* queue_de()
         if (queue_head)
         {
                 deq = queue_head;
-                if (queue_head != queue_tail)
+                if (queue_head != queue_tail) //not last element
                 {
                         queue_head = queue_head->next;
+			if (!queue_head)
+				error("we lost head but queue is not empty!\n");
                 }
-                else
+                else //last element
                 {
                         queue_head = queue_tail = NULL;
                 }
@@ -432,11 +440,16 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 			{
 				pkt->len = sglist[i].iov_len;
 				pkt->ptr = malloc(len);
+				if (!pkt->ptr)
+					error("failed to allocate RAM for a new msg!\n");
 				memcpy(pkt->ptr, sglist[i].iov_base, pkt->len);
-				num = queue_add(pkt); num = num;
-				dt->pkts_rcvd++;
-				debug("packet added to queue. now in queue: %d, pkts_rcvd: %u \n",
-					num, dt->pkts_rcvd);
+				num = queue_add(pkt);
+				if (num > 0)
+				{
+					dt->pkts_rcvd++;
+					debug("packet added to queue. now in queue: %d, pkts_rcvd: %u \n",
+						num, dt->pkts_rcvd);
+				}
 			}	
 		}
 	}

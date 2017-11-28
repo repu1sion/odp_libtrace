@@ -31,7 +31,7 @@
 
 //----- OPTIONS -----
 //#define MULTI_INPUT_QUEUES
-#define DEBUG
+//#define DEBUG
 #define ERROR_DBG
 #define OPTION_PRINT_PACKETS
 
@@ -154,7 +154,7 @@ static int queue_add(pckt_t *pkt)
         }
         else
         {
-                queue_tail->next = pkt;
+                queue_tail->next = pkt;		//we set element->next here
                 queue_tail = pkt;
         }
         pkt->next = NULL;
@@ -168,8 +168,8 @@ static pckt_t* queue_de()
 {
         pckt_t *deq = NULL;
 
-	pthread_spin_trylock(&queue_lock);
-	//pthread_spin_lock(&queue_lock);
+	//pthread_spin_trylock(&queue_lock);
+	pthread_spin_lock(&queue_lock);
         if (queue_head)
         {
                 deq = queue_head;
@@ -177,7 +177,10 @@ static pckt_t* queue_de()
                 {
                         queue_head = queue_head->next;
 			if (!queue_head)
-				error("we lost head but queue is not empty!\n");
+			{
+				error("we lost head but queue is not empty: %d\n", queue_num);
+				return NULL;
+			}
                 }
                 else //last element
                 {

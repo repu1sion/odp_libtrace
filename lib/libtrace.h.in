@@ -402,6 +402,7 @@ enum base_format_t {
         TRACE_FORMAT_PCAPNG       =23,    /**< PCAP-NG trace file */
         TRACE_FORMAT_NDAG         =24,    /**< DAG multicast over a network */
 	TRACE_FORMAT_DPDK_NDAG    =25,    /**< DAG multicast over a network, received via DPDK */
+        TRACE_FORMAT_ETSILIVE     =26     /**< ETSI LI over a network */
 };
 
 /** RT protocol packet types */

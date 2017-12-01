@@ -24,7 +24,8 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_QUEUE_DEPTH	16384
+#define ACCE_QUEUE_DEPTH	32768
+#define ACCE_BATCH_SIZE 	500
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
@@ -882,8 +883,8 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 {
 	debug("%s() \n", __func__);
 
-	debug("%s() disconnect\n", __func__);
-        //XXX: wait, do not send disconnect event
+	printf("%s() output is over. disconnect in 5 secs\n", __func__);
+	xio_context_stop_loop(OUTPUT->ctx);
         sleep(5);
 
 	xio_disconnect(OUTPUT->conn);
@@ -1458,8 +1459,9 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		debug("packet added to output queue. now in queue: %d, pkts went to sending: %lu \n",
 			num, OUTPUT->cnt);
 	}
-	//XXX - maybe don't need to stop it here every packet, just once per 10 packets etc
-	xio_context_stop_loop(OUTPUT->ctx);
+
+	if (!(OUTPUT->cnt % ACCE_BATCH_SIZE))
+		xio_context_stop_loop(OUTPUT->ctx);
 	
 #if 0
 	if (xio_send_msg(OUTPUT->conn, msg) == -1) 
@@ -1486,6 +1488,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	//end of accelio part ---------
 
+#if 0
 	assert(OUTPUT->file);
 
 	//seems like we are writing just raw packet in file
@@ -1495,6 +1498,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		trace_set_err_out(libtrace, errno, "Writing packet failed");
 		return -1;
 	}
+#endif
 
 	return numbytes;
 }

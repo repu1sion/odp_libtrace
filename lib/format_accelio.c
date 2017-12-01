@@ -31,10 +31,9 @@
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
-//#define MULTI_INPUT_QUEUES
 //#define DEBUG
 #define ERROR_DBG
-#define OPTION_PRINT_PACKETS
+//#define OPTION_PRINT_PACKETS
 
 #ifdef DEBUG
  #define debug(x...) printf(x)
@@ -259,6 +258,11 @@ static pckt_t* o_queue_de()
 	}
 }
 
+
+//disconnect sequence:
+/* client session event: connection closed. reason: Session closed
+   client session event: connection teardown. reason: Session closed
+   client session event: session teardown. reason: Session closed */
 
 //----------------- client callbacks -------------------------------------------
 static int on_session_event_client(struct xio_session *session,
@@ -889,13 +893,18 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 
 	xio_disconnect(OUTPUT->conn);
 
+	//wait till we get events: connection teardown, session teardown, 
+	while (OUTPUT->conn_established)
+	{
+		sleep(1);
+	}
+
+//we do connection/session destroy in callbacks on according events, not here
 #if 0
 	debug("%s() dstr connection\n", __func__);
 	xio_connection_destroy(OUTPUT->conn);
 	debug("%s() dstr session\n", __func__);
 	xio_session_destroy(OUTPUT->session);
-	debug("%s() dstr context loop\n", __func__);
-	xio_context_stop_loop(OUTPUT->ctx);
 #endif
 
 	debug("%s() dstr context\n", __func__);

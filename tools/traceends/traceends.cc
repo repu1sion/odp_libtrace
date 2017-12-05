@@ -1,3 +1,30 @@
+/*
+ *
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
+ * All rights reserved.
+ *
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
+ * research group. For further information please see http://www.wand.net.nz/
+ *
+ * libtrace is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * libtrace is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+
 #define __STDC_FORMAT_MACROS
 
 #include <libtrace.h>
@@ -281,7 +308,8 @@ static void update_ipv4(libtrace_ip_t *ip, uint16_t ip_len, uint32_t rem,
 	c->src_pkts ++;
 	c->src_pbytes += plen;
 	c->src_bytes += ip->ip_len;
-	c->last_active = ts;
+        if (ts != 0)
+        	c->last_active = ts;
 	
 	key = ip->ip_dst.s_addr;
 	
@@ -296,7 +324,8 @@ static void update_ipv4(libtrace_ip_t *ip, uint16_t ip_len, uint32_t rem,
 	c->dst_pkts ++;
 	c->dst_pbytes += plen;
 	c->dst_bytes += ip_len;
-	c->last_active = ts;
+        if (ts != 0)
+        	c->last_active = ts;
 }
 
 static int per_packet(libtrace_packet_t *packet) {
@@ -427,6 +456,8 @@ int main(int argc, char *argv[]) {
                 }
 
 		while (trace_read_packet(input,packet)>0) {
+                        if (IS_LIBTRACE_META_PACKET(packet))
+                                continue;
                         if (per_packet(packet) < 1)
                                 done = 1;
                         if (done)

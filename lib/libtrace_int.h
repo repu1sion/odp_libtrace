@@ -1,36 +1,28 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton, 
- * New Zealand.
- *
- * Authors: Daniel Lawson 
- *          Perry Lorier
- *          Shane Alcock 
- *          
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
- * This code has been developed by the University of Waikato WAND 
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
-
 /** @file
  *
  * @brief Header file containing definitions for structures and functions that
@@ -334,6 +326,8 @@ struct libtrace_t {
 	bool started;
 	/** Synchronise writes/reads across this format object and attached threads etc */
 	pthread_mutex_t libtrace_lock;
+	/** Packet read lock, seperate from libtrace_lock as to not block while reading a burst */
+	pthread_mutex_t read_packet_lock;
 	/** State */
 	enum trace_state state;
 	/** Use to control pausing threads and finishing threads etc always used with libtrace_lock */
@@ -613,7 +607,7 @@ struct libtrace_format_t {
 	 * @param packet	The libtrace packet to read into
 	 * @return The size of the packet read (in bytes) including the capture
 	 * framing header, or -1 if an error occurs. 0 is returned in the
-	 * event of an EOF. 
+	 * event of an EOF or -2 in the case of interrupting the parallel API.
 	 *
 	 * If no packets are available for reading, this function should block
 	 * until one appears or return 0 if the end of a trace file has been
@@ -1040,6 +1034,24 @@ struct libtrace_format_t {
  */
 extern volatile int libtrace_halt;
 
+/**
+ * Used by a format to check if trace_interrupt or if a trace_pause/stop has
+ * been called. Provides backwards compatibility with traditional read
+ * functions when trace_read_packet() is used by the parallel API.
+ *
+ * Returns -1 if not halting otherwise returns the code that the read
+ * operation should pass on.
+ */
+static inline int is_halted(libtrace_t *trace) {
+	if (!(libtrace_halt || trace->state == STATE_PAUSING)) {
+		return -1;
+	} else if (libtrace_halt) {
+		return READ_EOF;
+	} else {
+		return READ_MESSAGE;
+	}
+}
+
 /** Registers a new capture format module.
  *
  * @param format	The format module to be registered
@@ -1067,6 +1079,13 @@ libtrace_linktype_t pcap_linktype_to_libtrace(libtrace_dlt_t linktype);
  * @return The RT type that is equivalent to the provided DLT
  */
 libtrace_rt_types_t pcap_linktype_to_rt(libtrace_dlt_t linktype);
+
+/** Converts a PCAP-NG DLT into an RT protocol type.
+ *
+ * @param linktype	The PCAP DLT to be converted
+ * @return The RT type that is equivalent to the provided DLT
+ */
+libtrace_rt_types_t pcapng_linktype_to_rt(libtrace_dlt_t linktype);
 
 /** Converts a libtrace link type into a PCAP linktype.
  *
@@ -1248,12 +1267,16 @@ void linuxring_constructor(void);
 void pcap_constructor(void);
 /** Constructor for the PCAP File format module */
 void pcapfile_constructor(void);
+/** Constructor for the PCAP-NG File format module */
+void pcapng_constructor(void);
 /** Constructor for the RT format module */
 void rt_constructor(void);
 /** Constructor for the DUCK format module */
 void duck_constructor(void);
 /** Constructor for the ATM Header format module */
 void atmhdr_constructor(void);
+/** Constructor for the network DAG format module */
+void ndag_constructor(void);
 #ifdef HAVE_BPF
 /** Constructor for the BPF format module */
 void bpf_constructor(void);

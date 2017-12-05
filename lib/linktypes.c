@@ -1,36 +1,28 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton, 
- * New Zealand.
- *
- * Authors: Daniel Lawson 
- *          Perry Lorier
- *          Shane Alcock 
- *          
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
- * This code has been developed by the University of Waikato WAND 
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
-
 #include "config.h"
 #include "libtrace.h"
 
@@ -146,19 +138,26 @@ libtrace_rt_types_t bpf_linktype_to_rt(libtrace_dlt_t linktype) {
 
 }
 
+libtrace_rt_types_t pcapng_linktype_to_rt(libtrace_dlt_t linktype) {
+
+        return TRACE_RT_DATA_PCAPNG + pcap_dlt_to_pcap_linktype(linktype);
+}
+
 libtrace_dlt_t rt_to_pcap_linktype(libtrace_rt_types_t rt_type)
 {
-	
+
 	if (rt_type >= TRACE_RT_DATA_DLT && rt_type < TRACE_RT_DATA_DLT_END) {
 		/* RT type is in the pcap range */
 		return rt_type - TRACE_RT_DATA_DLT;
-	} 
+	}
 	else if (rt_type >= TRACE_RT_DATA_BPF && rt_type < TRACE_RT_DATA_BPF_END) {
 		return rt_type - TRACE_RT_DATA_BPF;
-	}
-	
+	} else if (rt_type >= TRACE_RT_DATA_PCAPNG && rt_type < TRACE_RT_DATA_PCAPNG_END) {
+                return rt_type - TRACE_RT_DATA_PCAPNG;
+        }
+
 	fprintf(stderr, "Error: RT type %u cannot be converted to a pcap DLT\n", rt_type);
-	assert(rt_type >= TRACE_RT_DATA_DLT && rt_type < TRACE_RT_DATA_BPF_END);
+	assert(false);
 	return 0;	/* satisfy warnings */
 }
 
@@ -219,6 +218,7 @@ libtrace_linktype_t arphrd_type_to_libtrace(unsigned int arphrd) {
 		case LIBTRACE_ARPHRD_IEEE80211_RADIOTAP: return TRACE_TYPE_80211_RADIO;
 		case LIBTRACE_ARPHRD_PPP: return TRACE_TYPE_NONE;
 		case LIBTRACE_ARPHRD_LOOPBACK: return TRACE_TYPE_ETH;
+		case LIBTRACE_ARPHRD_SIT: return TRACE_TYPE_ETH;
 		case LIBTRACE_ARPHRD_NONE: return TRACE_TYPE_NONE;
 	}
 	printf("Unknown ARPHRD %08x\n",arphrd);

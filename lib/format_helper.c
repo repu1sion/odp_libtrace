@@ -1,36 +1,28 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton, 
- * New Zealand.
- *
- * Authors: Daniel Lawson 
- *          Perry Lorier
- *          Shane Alcock 
- *          
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
- * This code has been developed by the University of Waikato WAND 
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
-
 #include "config.h"
 #include <sys/types.h>
 #include <fcntl.h> /* for O_LARGEFILE */
@@ -330,3 +322,84 @@ void trace_set_err_out(libtrace_out_t *trace,int errcode,const char *msg,...)
 	}
 	va_end(va);
 }
+
+/** Attempts to determine the direction for a pcap (or pcapng) packet.
+ *
+ * @param packet        The packet in question.
+ * @return A valid libtrace_direction_t describing the direction that the
+ *         packet was travelling, if direction can be determined. Otherwise
+ *         returns TRACE_DIR_UNKNOWN.
+ * @internal
+ *
+ * Note that we can determine the direction for only certain types of packets
+ * if they are captured using pcap/pcapng, specifically SLL and PFLOG captures.
+ */
+libtrace_direction_t pcap_get_direction(const libtrace_packet_t *packet) {
+        libtrace_direction_t direction  = -1;
+        switch(pcap_linktype_to_libtrace(rt_to_pcap_linktype(packet->type))) {
+                /* We can only get the direction for PCAP packets that have
+                 * been encapsulated in Linux SLL or PFLOG */
+                case TRACE_TYPE_LINUX_SLL:
+                {
+                        libtrace_sll_header_t *sll;
+                        libtrace_linktype_t linktype;
+
+                        sll = (libtrace_sll_header_t*)trace_get_packet_buffer(
+                                        packet,
+                                        &linktype,
+                                        NULL);
+                        if (!sll) {
+                                trace_set_err(packet->trace,
+                                        TRACE_ERR_BAD_PACKET,
+                                                "Bad or missing packet");
+                                return -1;
+                        }
+                        /* 0 == LINUX_SLL_HOST */
+                        /* the Waikato Capture point defines "packets
+                         * originating locally" (ie, outbound), with a
+                         * direction of 0, and "packets destined locally"
+                         * (ie, inbound), with a direction of 1.
+                         * This is kind-of-opposite to LINUX_SLL.
+                         * We return consistent values here, however
+                         *
+                         * Note that in recent versions of pcap, you can
+                         * use "inbound" and "outbound" on ppp in linux
+                         */
+                        if (ntohs(sll->pkttype == 0)) {
+                                direction = TRACE_DIR_INCOMING;
+                        } else {
+                                direction = TRACE_DIR_OUTGOING;
+                        }
+                        break;
+
+                }
+               case TRACE_TYPE_PFLOG:
+                {
+                        libtrace_pflog_header_t *pflog;
+                        libtrace_linktype_t linktype;
+
+                        pflog=(libtrace_pflog_header_t*)trace_get_packet_buffer(
+                                        packet,&linktype,NULL);
+                        if (!pflog) {
+                                trace_set_err(packet->trace,
+                                                TRACE_ERR_BAD_PACKET,
+                                                "Bad or missing packet");
+                                return -1;
+                        }
+                        /* enum    { PF_IN=0, PF_OUT=1 }; */
+                        if (ntohs(pflog->dir==0)) {
+
+                                direction = TRACE_DIR_INCOMING;
+                        }
+                        else {
+                                direction = TRACE_DIR_OUTGOING;
+                        }
+                        break;
+                }
+                default:
+                        break;
+        }       
+        return direction;
+}
+
+

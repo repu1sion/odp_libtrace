@@ -1,32 +1,29 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton, New Zealand.
- * Authors: Daniel Lawson 
- *          Perry Lorier 
- *          
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
- * This code has been developed by the University of Waikato WAND 
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
+
 
 /* This program takes a series of traces and bpf filters and outputs how many
  * bytes/packets every time interval
@@ -191,6 +188,10 @@ static libtrace_packet_t *cb_packet(libtrace_t *trace, libtrace_thread_t *t,
         thread_data_t *td = (thread_data_t *)tls;
         int i;
 
+        if (IS_LIBTRACE_META_PACKET(packet)) {
+                return packet;
+        }
+
         key = trace_get_erf_timestamp(packet);
         if ((key >> 32) >= (td->last_key >> 32) + packet_interval) {
                 libtrace_generic_t tmp = {.ptr = td->results};
@@ -260,12 +261,13 @@ static void run_trace(char *uri)
 		return;
 	}
 	trace_set_combiner(trace, &combiner_ordered, (libtrace_generic_t){0});
-	trace_set_tracetime(trace, true);
         trace_set_perpkt_threads(trace, threadcount);
 	trace_set_burst_size(trace, burstsize);
 
 	if (trace_get_information(trace)->live) {
                 trace_set_tick_interval(trace, (int) (packet_interval * 1000));
+	} else {
+		trace_set_tracetime(trace, true);
 	}
 
         pktcbs = trace_create_callback_set();

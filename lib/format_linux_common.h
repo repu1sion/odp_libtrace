@@ -1,3 +1,30 @@
+/*
+ *
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
+ * All rights reserved.
+ *
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
+ * research group. For further information please see http://www.wand.net.nz/
+ *
+ * libtrace is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * libtrace is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+
 /* Various definitions required for the linux format. They were moved here,
  * because format_linux.c had a lot of header information before the actual
  * code. The linux headers have been copied into here rather than included to
@@ -229,6 +256,7 @@ struct linux_format_data_t {
 	 * file descriptors from packet fanout will use, here we assume/hope
 	 * that every ring can get setup the same */
 	libtrace_list_t *per_stream;
+
 };
 
 struct linux_format_data_out_t {
@@ -259,9 +287,10 @@ struct linux_per_stream_t {
 	int rxring_offset;
 	/* The ring buffer layout */
 	struct tpacket_req req;
+	uint64_t last_timestamp;
 } ALIGN_STRUCT(CACHE_LINE_SIZE);
 
-#define ZERO_LINUX_STREAM {-1, MAP_FAILED, 0, {0,0,0,0}}
+#define ZERO_LINUX_STREAM {-1, MAP_FAILED, 0, {0,0,0,0}, 0}
 
 
 /* Format header for encapsulating packets captured using linux native */

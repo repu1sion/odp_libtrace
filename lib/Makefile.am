@@ -1,11 +1,12 @@
 lib_LTLIBRARIES = libtrace.la
-include_HEADERS = libtrace.h dagformat.h lt_inttypes.h daglegacy.h \
-        rt_protocol.h erftypes.h libtrace_parallel.h \
+include_HEADERS = libtrace.h libtrace_parallel.h
+pkginclude_HEADERS = dagformat.h lt_inttypes.h daglegacy.h \
+        rt_protocol.h erftypes.h \
         data-struct/ring_buffer.h data-struct/object_cache.h \
-        data-struct/vector.h data-struct/message_queue.h \
+        data-struct/vector.h \
         data-struct/deque.h data-struct/linked_list.h \
-        data-struct/sliding_window.h hash_toeplitz.h \
-        data-struct/buckets.h
+        data-struct/buckets.h data-struct/sliding_window.h \
+	data-struct/message_queue.h hash_toeplitz.h
 
 AM_CFLAGS=@LIBCFLAGS@ @CFLAG_VISIBILITY@ -pthread
 AM_CXXFLAGS=@LIBCXXFLAGS@ @CFLAG_VISIBILITY@ -pthread
@@ -56,14 +57,14 @@ libtrace_la_SOURCES = trace.c trace_parallel.c common.h \
 		format_erf.c format_pcap.c format_legacy.c \
 		format_rt.c format_helper.c format_helper.h format_pcapfile.c \
 		format_duck.c format_tsh.c $(NATIVEFORMATS) $(BPFFORMATS) \
-		format_atmhdr.c \
+		format_atmhdr.c format_pcapng.c \
 		libtrace_int.h lt_inttypes.h lt_bswap.h \
 		linktypes.c link_wireless.c byteswap.c \
 		checksum.c checksum.h \
 		protocols_pktmeta.c protocols_l2.c protocols_l3.c \
 		protocols_transport.c protocols.h protocols_ospf.c \
 		protocols_application.c \
-		$(DAGSOURCE) format_erf.h \
+		$(DAGSOURCE) format_erf.h format_ndag.c format_ndag.h \
 		$(BPFJITSOURCE) \
 		libtrace_arphrd.h \
 		data-struct/ring_buffer.c data-struct/vector.c \

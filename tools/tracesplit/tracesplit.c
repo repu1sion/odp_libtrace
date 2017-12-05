@@ -1,3 +1,30 @@
+/*
+ *
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
+ * All rights reserved.
+ *
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
+ * research group. For further information please see http://www.wand.net.nz/
+ *
+ * libtrace is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * libtrace is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+
 #include <libtrace.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -180,6 +207,10 @@ static int per_packet(libtrace_packet_t **packet) {
 
 	debug("TRACESPLIT: per_packet() called. \n");
 
+        if (IS_LIBTRACE_META_PACKET((*packet))) {
+                return 1;
+        }
+
 	if (trace_get_link_type(*packet) == -1) {
 		fprintf(stderr, "Halted due to being unable to determine linktype - input trace may be corrupt.\n");
 		return -1;
@@ -206,10 +237,11 @@ static int per_packet(libtrace_packet_t **packet) {
 
 	if (firsttime==0) {
 		time_t now = trace_get_seconds(*packet);
-		if (starttime != 0) {
+
+		if (now != 0 && starttime != 0) {
 			firsttime=now-((now - starttime)%interval);
 		}
-		else {
+		else if (now != 0) {
 			firsttime=now;
 		}
 	}

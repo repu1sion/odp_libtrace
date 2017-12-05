@@ -1,34 +1,26 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton, 
- * New Zealand.
- *
- * Authors: Daniel Lawson 
- *          Perry Lorier
- *          Shane Alcock
- *          Richard Sanger 
- *          
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
  *
- * This code has been developed by the University of Waikato WAND 
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
 
@@ -222,8 +214,8 @@ inline static int linuxnative_read_stream(libtrace_t *libtrace,
 				trace_set_err(libtrace, errno, "select");
 				return -1;
 			} else {
-				if (libtrace_halt)
-					return READ_EOF;
+				if ((ret=is_halted(libtrace)) != -1)
+					return ret;
 			}
 		}
 		while (ret <= 0);
@@ -293,6 +285,7 @@ inline static int linuxnative_read_stream(libtrace_t *libtrace,
 		}
 	}
 
+
 	/* Buffer contains all of our packet (including our custom header) so
 	 * we just need to get prepare_packet to set all our packet pointers
 	 * appropriately */
@@ -301,6 +294,22 @@ inline static int linuxnative_read_stream(libtrace_t *libtrace,
 				packet->type, flags))
 		return -1;
 	
+	if (hdr->timestamptype == TS_TIMEVAL) {
+		packet->order = (((uint64_t)hdr->tv.tv_sec) << 32)
+        	            + ((((uint64_t)hdr->tv.tv_usec) << 32) /1000000);
+	} else if (hdr->timestamptype == TS_TIMESPEC) {
+		packet->order = (((uint64_t)hdr->ts.tv_sec) << 32)
+        	            + ((((uint64_t)hdr->ts.tv_nsec) << 32) /1000000000);
+	} else {
+		packet->order = 0;
+	}
+
+        if (packet->order <= stream->last_timestamp) {
+                packet->order = stream->last_timestamp + 1;
+        }
+
+        stream->last_timestamp = packet->order;
+
 	return hdr->wirelen+sizeof(*hdr);
 }
 

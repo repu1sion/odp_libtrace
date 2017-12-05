@@ -259,7 +259,7 @@ typedef struct callback_set libtrace_callback_set_t;
 
 /** If the packet has allocated its own memory the buffer_control should be
  * set to TRACE_CTRL_PACKET, so that the memory will be freed when the packet
- * is destroyed. If the packet has been zerocopied out of memory owned by
+ * is destroyed. If the packet has been zero-copied out of memory owned by
  * something else, e.g. a DAG card, it should be TRACE_CTRL_EXTERNAL.
  *
  * @note The letters p and e are magic numbers used to detect if the packet
@@ -281,7 +281,7 @@ typedef struct trace_err_t{
 
 /** Enumeration of error codes */
 enum {
-	/** No Error has occured.... yet. */
+	/** No Error has occurred.... yet. */
 	TRACE_ERR_NOERROR 	= 0,
 	/** The URI passed to trace_create() is unsupported, or badly formed */
 	TRACE_ERR_BAD_FORMAT 	= -1,
@@ -335,7 +335,7 @@ typedef enum {
 	TRACE_DLT_OPENBSD_LOOP = 108,
 #endif
 	TRACE_DLT_PPP_SERIAL = 50,
-	TRACE_DLT_LINKTYPE_RAW = 101, /**< See TRACE_DLT_RAW for explainations of pain. */
+	TRACE_DLT_LINKTYPE_RAW = 101, /**< See TRACE_DLT_RAW for explanations of pain. */
 	TRACE_DLT_C_HDLC = 104,
 	TRACE_DLT_IEEE802_11 = 105,
 	TRACE_DLT_LINUX_SLL = 113,
@@ -390,11 +390,13 @@ enum base_format_t {
 	TRACE_FORMAT_LEGACY_NZIX  =14,	/**< Legacy format used for NZIX traces */
 	TRACE_FORMAT_LINUX_RING	  =15,	/**< Linux native interface capture PACKET_MMAP */
 	TRACE_FORMAT_RAWERF	  =16,	/**< Special format for reading uncompressed ERF traces without checking for compression */
-    TRACE_FORMAT_DPDK     =17, /**< The Intel Data Plane Development Kit format */
+    	TRACE_FORMAT_DPDK	  =17, /**< The Intel Data Plane Development Kit format */
 	TRACE_FORMAT_ODP          =18,
 	TRACE_FORMAT_PARQ         =19,
 	TRACE_FORMAT_KAFKA        =20,
 	TRACE_FORMAT_ACCE         =21,
+        TRACE_FORMAT_PCAPNG       =22,    /**< PCAP-NG trace file */
+        TRACE_FORMAT_NDAG         =23     /**< DAG multicast over a network */
 };
 
 /** RT protocol packet types */
@@ -420,6 +422,7 @@ typedef enum {
 	TRACE_RT_CLIENTDROP	=17,/**< Reliable client was lost */
 	TRACE_RT_METADATA	=18,/**< Packet contains server meta-data */
 	TRACE_RT_DUCK_5_0 	=19,/**< Dag 5.0 Duck */
+        TRACE_RT_PCAPNG_META    =20,/**< Metadata for a PCAP NG input source */
 
 	/** Not actually used - all DATA types begin from this value */
 	TRACE_RT_DATA_SIMPLE	= 1000, 
@@ -487,9 +490,12 @@ typedef enum {
 	TRACE_RT_BPF_ATM_RFC1483 	=TRACE_RT_DATA_BPF+TRACE_DLT_ATM_RFC1483,
 
 	TRACE_RT_DATA_BPF_END		= 3999,
+
+        TRACE_RT_DATA_PCAPNG            = 4000,
+	TRACE_RT_DATA_PCAPNG_END        = 4499,
 	/** Unused value marking the end of the valid range for all RT packet
 	 * types */
-	TRACE_RT_LAST			= 4000
+	TRACE_RT_LAST			= 4500
 } libtrace_rt_types_t;
 
 /** IP Protocol values */
@@ -555,9 +561,11 @@ typedef struct libtrace_packet_t {
 	uint64_t order; /**< Notes the order of this packet in relation to the input */
 	uint64_t hash; /**< A hash of the packet as supplied by the user */
 	int error; /**< The error status of pread_packet */
-        uint64_t internalid;            /** Internal indentifier for the pkt */
+        uint64_t internalid;            /** Internal identifier for the pkt */
         void *srcbucket;
 } libtrace_packet_t;
+
+#define IS_LIBTRACE_META_PACKET(packet) (packet->type < TRACE_RT_DATA_SIMPLE)
 
 
 /** Trace directions. 
@@ -583,7 +591,7 @@ typedef enum {
     TRACE_RADIOTAP_DBM_ANTNOISE = 6, /**< Noise power in dBm (int8) */
     TRACE_RADIOTAP_LOCK_QUALITY = 7, /**< Barker Code lock quality (uint16) */
     TRACE_RADIOTAP_TX_ATTENUATION = 8, /**< TX attenuation as unitless distance from max power (uint16) */
-    TRACE_RADIOTAP_DB_TX_ATTENUATION = 9, /**< TX attenutation as dB from max power (uint16) */
+    TRACE_RADIOTAP_DB_TX_ATTENUATION = 9, /**< TX attenuation as dB from max power (uint16) */
     TRACE_RADIOTAP_DBM_TX_POWER = 10, /**< TX Power in dBm (int8) */
     TRACE_RADIOTAP_ANTENNA = 11, /**< Antenna frame was rx'd or tx'd on (uint8) */
     TRACE_RADIOTAP_DB_ANTSIGNAL = 12, /**< Signal power in dB from a fixed reference (uint8) */
@@ -875,6 +883,11 @@ typedef struct libtrace_gre_t
 #define LIBTRACE_GRE_FLAG_KEY      0x2000
 #define LIBTRACE_GRE_FLAG_SEQ      0x1000
 #define LIBTRACE_GRE_FLAG_VERMASK  0x0007
+
+
+/* PPTP GRE (RFC2637) */
+#define LIBTRACE_GRE_FLAG_ACK 	   0x0080
+#define LIBTRACE_GRE_PPTP_VERSION  0x0001
 
 /** Libtrace local definition of VXLAN Header
  * (draft-mahalingam-dutt-dcops-vxlan)
@@ -1189,7 +1202,7 @@ DLLEXPORT void trace_interrupt(void);
  * @param uri		The uri to be parsed
  * @param [out] format	A pointer that will be updated to point to an allocated 
  * 			string holding the format component of the URI
- * @return NULL if an error occured, otherwise return a pointer to the uridata 
+ * @return NULL if an error occurred, otherwise return a pointer to the uridata 
  * component
  *
  * @note The format component is strdup'd by this function, so be sure to free
@@ -1214,9 +1227,9 @@ DLLEXPORT const char *trace_parse_uri(const char *uri, char **format);
  *  - rt:hostname
  *  - rt:hostname:port
  *
- *  If an error occured when attempting to open the trace file, a
+ *  If an error occurred when attempting to open the trace file, a
  *  trace is still returned so trace_is_err() should be called to find out
- *  if an error occured. The trace is created in the configuration state, you 
+ *  if an error occurred. The trace is created in the configuration state, you 
  *  must call trace_start before attempting to read packets from the trace.
  */
 DLLEXPORT libtrace_t *trace_create(const char *uri);
@@ -1245,7 +1258,7 @@ DLLEXPORT libtrace_t *trace_create_dead(const char *uri);
  *  - erf:/path/to/erf/file
  *  - pcap:/path/to/pcap/file
  *
- *  If an error occured when attempting to open the output trace, a trace is 
+ *  If an error occurred when attempting to open the output trace, a trace is 
  *  still returned but trace_errno will be set. Use trace_is_err_out() and 
  *  trace_perror_output() to get more information.
  */
@@ -1399,7 +1412,7 @@ typedef enum {
 	TRACE_OPTION_OUTPUT_COMPRESSTYPE
 } trace_option_output_t;
 
-/* To add a new stat field update this list, and the relevent places in
+/* To add a new stat field update this list, and the relevant places in
  * libtrace_stat_t structure.
  */
 /** An X Macro set for libtrace stat fields */
@@ -1409,6 +1422,7 @@ typedef enum {
 	X(received) \
 	X(dropped) \
 	X(captured) \
+        X(missing) \
 	X(errors)
 
 /**
@@ -1427,7 +1441,7 @@ typedef struct libtrace_stat_t {
 	/* We use the remaining space as magic to ensure the structure
 	 * was alloc'd by us. We can easily decrease the no. bits without
 	 * problems as long as we update any asserts as needed */
-	LT_BITFIELD64 reserved1: 26; /**< Bits reserved for future fields */
+	LT_BITFIELD64 reserved1: 25; /**< Bits reserved for future fields */
 	LT_BITFIELD64 reserved2: 24; /**< Bits reserved for future fields */
 	LT_BITFIELD64 magic: 8; /**< A number stored against the format to
 				  ensure the struct was allocated correctly */
@@ -1452,7 +1466,7 @@ typedef struct libtrace_stat_t {
 	 */
 	uint64_t filtered;
 
-	/** The total number of good packets which have been recevied. Including
+	/** The total number of good packets which have been received. Including
 	 * those which are dropped and filtered. This does not include errors.
 	 *
 	 * @note This may include a small number of buffered packets
@@ -1479,6 +1493,16 @@ typedef struct libtrace_stat_t {
 	 *       not yet included in accepted.
 	 */
         uint64_t captured;
+
+        /** The number of packets (or aggregated records) that have been
+         *  lost between the original capture device and the current input
+         *  trace.
+         *
+         *  @note Only relevant for input formats that use a network to
+         *  transfer live captured packets from one host to another (e.g.
+         *  nDAG).
+         */
+        uint64_t missing;
 
 	/** The number of packets that have been discarded by the network card
 	 * because they are invalid. That includes FCS mismatches, incorrect
@@ -1632,7 +1656,7 @@ uint64_t trace_get_accepted_packets(libtrace_t *trace);
 /**
  * Returns statistic counters for a trace, for a parallel trace this is a
  * combined total.
- * Where possible these are retrived atomically, however this behaviour depends
+ * Where possible these are retrieved atomically, however this behaviour depends
  * on the underlying trace format.
  *
  * @param trace The input trace to examine.
@@ -1653,11 +1677,11 @@ libtrace_stat_t *trace_get_statistics(libtrace_t *trace, libtrace_stat_t *stats)
 
 /**
  * Returns statistic counters for a single thread of a trace.
- * Where possible these are retrived atomically, however this behaviour depends
+ * Where possible these are retrieved atomically, however this behaviour depends
  * on the underlying trace format.
  *
  * @param trace The input trace to examine.
- * @param t An optional thread to received stats for or NULL to retrive stats
+ * @param t An optional thread to received stats for or NULL to retrieve stats
  *          for the current thread
  * @param stats Filled upon return with statistics about the trace, check the
  *              flags included to see if a given statistic is valid.
@@ -1682,6 +1706,15 @@ void trace_get_thread_statistics(libtrace_t *trace, libtrace_thread_t *t,
  *         memory was not available.
  */
 DLLEXPORT libtrace_stat_t* trace_create_statistics(void);
+
+/**
+ * Clear all fields of given statistic.
+ * This api doesn't verify the magic field unlike other stat apis.
+ *
+ * @param s The statistic structure to clear
+ */
+DLLEXPORT
+void trace_clear_statistics(libtrace_stat_t *s);
 
 /**
  * Performs the operation c=a-b accounting for valid fields.
@@ -1747,7 +1780,7 @@ DLLEXPORT libtrace_packet_t *trace_create_packet(void);
  * @note This always involves a copy, which can be slow.  Use of this 
  * function should be avoided where possible.
  * 
- * @par The reason you would want to use this function is that a zerocopied
+ * @par The reason you would want to use this function is that a zero-copied
  * packet from a device will be stored using memory owned by the device which
  * may be a limited resource. Copying the packet will ensure that the packet
  * is now stored in memory owned and managed by libtrace.
@@ -2706,7 +2739,7 @@ void *trace_get_ospf_contents_v2(libtrace_ospf_v2_t *header,
  * first LSA.
  *
  * @note This function only works for OSPF version 2 packets.
- * @note trace_get_next_ospf_lsa_v2() should be subequently used to process the LSAs
+ * @note trace_get_next_ospf_lsa_v2() should be subsequently used to process the LSAs
  */
 DLLEXPORT SIMPLE_FUNCTION 
 unsigned char *trace_get_first_ospf_lsa_from_update_v2(
@@ -2729,7 +2762,7 @@ unsigned char *trace_get_first_ospf_lsa_from_update_v2(
  * the first LSA.
  *
  * @note This function only works for OSPF version 2 packets.
- * @note trace_get_next_ospf_lsa_header_v2() should be subequently used to process the LSA headers
+ * @note trace_get_next_ospf_lsa_header_v2() should be subsequently used to process the LSA headers
  */
 DLLEXPORT SIMPLE_FUNCTION 
 unsigned char *trace_get_first_ospf_lsa_from_db_desc_v2(
@@ -2752,7 +2785,7 @@ unsigned char *trace_get_first_ospf_lsa_from_db_desc_v2(
  * from the start of the first Link.
  *
  * @note This function only works for OSPF version 2 packets.
- * @note trace_get_next_ospf_link_v2() should be subequently used to process
+ * @note trace_get_next_ospf_link_v2() should be subsequently used to process
  * the links
  */
 DLLEXPORT SIMPLE_FUNCTION

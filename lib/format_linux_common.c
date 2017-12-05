@@ -1,34 +1,26 @@
 /*
- * This file is part of libtrace
  *
- * Copyright (c) 2007-2015 The University of Waikato, Hamilton,
- * New Zealand.
- *
- * Authors: Daniel Lawson
- *          Perry Lorier
- *          Shane Alcock
- *          Richard Sanger
- *
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
  * All rights reserved.
+ *
+ * This file is part of libtrace.
  *
  * This code has been developed by the University of Waikato WAND
  * research group. For further information please see http://www.wand.net.nz/
  *
  * libtrace is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
  * (at your option) any later version.
  *
  * libtrace is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
- * along with libtrace; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- * $Id$
  *
  */
 
@@ -68,7 +60,7 @@ int linuxcommon_probe_filename(const char *filename)
 /* Compiles a libtrace BPF filter for use with a linux native socket */
 static int linuxnative_configure_bpf(libtrace_t *libtrace,
 		libtrace_filter_t *filter) {
-#ifdef HAVE_LIBPCAP
+#if defined(HAVE_LIBPCAP) && defined(HAVE_BPF)
 	struct ifreq ifr;
 	unsigned int arphrd;
 	libtrace_dlt_t dlt;
@@ -132,7 +124,7 @@ static int linuxnative_configure_bpf(libtrace_t *libtrace,
 
 	return 0;
 #else
-	return -1
+	return -1;
 #endif
 }
 
@@ -249,7 +241,7 @@ void linuxcommon_close_input_stream(libtrace_t *libtrace,
 #define str(s) #s
 
 /* These don't typically reset however an interface does exist to reset them */
-static int linuxcommon_get_dev_statisitics(libtrace_t *libtrace, struct linux_dev_stats *stats) {
+static int linuxcommon_get_dev_statistics(libtrace_t *libtrace, struct linux_dev_stats *stats) {
 	FILE *file;
 	char line[1024];
 	struct linux_dev_stats tmp_stats;
@@ -260,12 +252,21 @@ static int linuxcommon_get_dev_statisitics(libtrace_t *libtrace, struct linux_de
 	}
 
 	/* Skip 2 header lines */
-	fgets(line, sizeof(line), file);
-	fgets(line, sizeof(line), file);
+	if (fgets(line, sizeof(line), file) == NULL) {
+                fclose(file);
+                return -1;
+        }
+
+	if (fgets(line, sizeof(line), file) == NULL) {
+                fclose(file);
+                return -1;
+        }
 
 	while (!(feof(file)||ferror(file))) {
 		int tot;
-		fgets(line, sizeof(line), file);
+		if (fgets(line, sizeof(line), file) == NULL)
+                        break;
+
 		tot = sscanf(line, " %"xstr(IF_NAMESIZE)"[^:]:" REPEAT_16(" %"SCNd64),
 		             tmp_stats.if_name,
 		             &tmp_stats.rx_bytes,
@@ -312,6 +313,8 @@ int linuxcommon_start_input_stream(libtrace_t *libtrace,
 	const int one = 1;
 	memset(&addr,0,sizeof(addr));
 	libtrace_filter_t *filter = FORMAT_DATA->filter;
+
+	stream->last_timestamp = 0;
 
 	/* Create a raw socket for reading packets on */
 	stream->fd = socket(PF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
@@ -400,6 +403,7 @@ int linuxcommon_start_input_stream(libtrace_t *libtrace,
 	 * that the filterstring has been compiled, or the filter was supplied
 	 * pre-compiled.
 	 */
+#ifdef HAVE_BPF
 	if (filter != NULL) {
 		/* Check if the filter was successfully compiled. If not,
 		 * it is probably a bad filter and we should return an error
@@ -420,6 +424,7 @@ int linuxcommon_start_input_stream(libtrace_t *libtrace,
 			perror("setsockopt(SO_ATTACH_FILTER)");
 		}
 	}
+#endif
 
 	/* Consume any buffered packets that were received before the socket
 	 * was properly setup, including those which missed the filter and
@@ -443,7 +448,7 @@ int linuxcommon_start_input_stream(libtrace_t *libtrace,
 	FORMAT_DATA->stats.tp_packets = -count;
 	FORMAT_DATA->stats.tp_drops = 0;
 
-	if (linuxcommon_get_dev_statisitics(libtrace, &FORMAT_DATA->dev_stats) != 0) {
+	if (linuxcommon_get_dev_statistics(libtrace, &FORMAT_DATA->dev_stats) != 0) {
 		/* Mark this as bad */
 		FORMAT_DATA->dev_stats.if_name[0] = 0;
 	}
@@ -534,7 +539,7 @@ static void linuxcommon_update_socket_statistics(libtrace_t *libtrace) {
 #define DEV_DIFF(x) (dev_stats.x - FORMAT_DATA->dev_stats.x)
 /* Note these statistics come from two different sources, the socket itself and
  * the linux device. As such this means it is highly likely that their is some
- * margin of error in the returned statisitics, we perform basic sanitising so
+ * margin of error in the returned statistics, we perform basic sanitising so
  * that these are not too noticable.
  */
 void linuxcommon_get_statistics(libtrace_t *libtrace, libtrace_stat_t *stat) {
@@ -551,7 +556,7 @@ void linuxcommon_get_statistics(libtrace_t *libtrace, libtrace_stat_t *stat) {
 	dev_stats.if_name[0] = 0; /* This will be set if we retrive valid stats */
 	/* Do we have starting stats to compare to? */
 	if (FORMAT_DATA->dev_stats.if_name[0] != 0) {
-		linuxcommon_get_dev_statisitics(libtrace, &dev_stats);
+		linuxcommon_get_dev_statistics(libtrace, &dev_stats);
 	}
 	linuxcommon_update_socket_statistics(libtrace);
 

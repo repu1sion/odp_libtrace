@@ -73,6 +73,8 @@ char *lookup_uri(const char *type)
 		return "erf:traces/100_packets.erf";
 	if (!strcmp(type,"pcap"))
 		return "pcap:traces/100_packets.pcap";
+	if (!strcmp(type,"pcapng"))
+		return "pcapng:traces/100_packets.pcapng";
 	if (!strcmp(type,"wtf"))
 		return "wtf:traces/wed.wtf";
 	if (!strcmp(type,"rtclient"))
@@ -203,8 +205,8 @@ int main(int argc, char *argv[]) {
 			error = 0;
 			break;
 		}
-		count ++;
-		trace_write_packet(outtrace,packet);
+		if (trace_write_packet(outtrace,packet) > 0)
+		        count ++;
 		iferrout(outtrace);
 		if (count>100)
 			break;
@@ -240,13 +242,20 @@ int main(int argc, char *argv[]) {
 	tcpcount=0;
 	while(trace_read_packet(trace,packet)>0) {
 		int err;
+
+                if (IS_LIBTRACE_META_PACKET(packet))
+                        continue;
+
 		++count;
-		if ((err=trace_read_packet(trace2,packet2))<1) {
-			printf("premature EOF on destination, %i from %s, %i from %s\n",count,lookup_uri(argv[1]),count-1,lookup_out_uri(argv[2]));
-			iferr(trace2);
-			error=1;
-			break;
-		}
+                do {
+        		if ((err=trace_read_packet(trace2,packet2))<1) {
+	        		printf("premature EOF on destination, %i from %s, %i from %s\n",count,lookup_uri(argv[1]),count-1,lookup_out_uri(argv[2]));
+		        	iferr(trace2);
+			        error=1;
+        			break;
+	        	}
+                } while (IS_LIBTRACE_META_PACKET(packet2));
+
 		/* The capture length might be snapped down to the wire length */
 		if (length_changed(packet, packet2)) {
 			printf("\t%s\t%s\n",

@@ -1,3 +1,30 @@
+/*
+ *
+ * Copyright (c) 2007-2016 The University of Waikato, Hamilton, New Zealand.
+ * All rights reserved.
+ *
+ * This file is part of libtrace.
+ *
+ * This code has been developed by the University of Waikato WAND
+ * research group. For further information please see http://www.wand.net.nz/
+ *
+ * libtrace is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU Lesser General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * libtrace is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ *
+ */
+
+
 #include "config.h"
 #include <stdlib.h>
 #include <string.h>
@@ -79,9 +106,10 @@ CryptoAnon::CryptoAnon(uint8_t *key, uint8_t len, uint8_t cachebits) :
     memcpy(this->padding, key + 16, 16);
 
     this->cipher = EVP_aes_128_ecb();
-    EVP_CIPHER_CTX_init(&this->ctx);
+    this->ctx = EVP_CIPHER_CTX_new();
+    EVP_CIPHER_CTX_init(this->ctx);
 
-    EVP_EncryptInit_ex(&this->ctx, this->cipher, NULL, this->key, NULL);
+    EVP_EncryptInit_ex(this->ctx, this->cipher, NULL, this->key, NULL);
 
     this->cachebits = cachebits;
 
@@ -97,7 +125,8 @@ CryptoAnon::CryptoAnon(uint8_t *key, uint8_t len, uint8_t cachebits) :
 
 CryptoAnon::~CryptoAnon() {
     delete(this->ipv4_cache);
-    EVP_CIPHER_CTX_cleanup(&this->ctx);
+    EVP_CIPHER_CTX_cleanup(this->ctx);
+    EVP_CIPHER_CTX_free(this->ctx);
 }
 
 static inline uint32_t generateFirstPad(uint8_t *pad) {
@@ -227,7 +256,7 @@ uint32_t CryptoAnon::encrypt32Bits(uint32_t orig, uint8_t start, uint8_t stop,
         /* Encryption: we're using AES as a pseudorandom function. For each
          * bit in the original address, we use the first bit of the resulting
          * encrypted output as part of an XOR mask */
-        EVP_EncryptUpdate(&this->ctx, (unsigned char *)rin_output, &outl, 
+        EVP_EncryptUpdate(this->ctx, (unsigned char *)rin_output, &outl, 
                 (unsigned char *)rin_input, 16);
 
         /* Put the first bit of the output into the right slot of our mask */
@@ -262,7 +291,7 @@ uint64_t CryptoAnon::encrypt64Bits(uint64_t orig) {
 
         memcpy(rin_input, &input, 8);
 
-        EVP_EncryptUpdate(&this->ctx, (unsigned char *)rin_output, &outl,
+        EVP_EncryptUpdate(this->ctx, (unsigned char *)rin_output, &outl,
                 (unsigned char *)rin_input, 16);
 
         result |= ((((uint64_t)rin_output[0]) >> 7) << (63 - pos));

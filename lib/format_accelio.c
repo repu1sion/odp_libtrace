@@ -25,13 +25,14 @@
 
 //----- CONFIG -----
 #define ACCE_QUEUE_DEPTH	32768
+#define ACCE_MAX_MSG_SIZE	16384
 #define ACCE_BATCH_SIZE 	500
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
-//#define DEBUG
+#define DEBUG
 #define ERROR_DBG
 //#define OPTION_PRINT_PACKETS
 
@@ -573,12 +574,15 @@ static int acce_init_input(libtrace_t *libtrace)
 	//init accelio ---------------------------------------------------------
         xio_init();
 
-        /* get max msg size */
+        /* set, then get max msg size */
         /* this size distinguishes between big and small msgs, where for small msgs 
    	   rdma_post_send/rdma_post_recv
            are called as opposed to to big msgs where rdma_write/rdma_read are called */
+	opt = ACCE_MAX_MSG_SIZE;
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, sizeof(int));
         xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
         FORMAT(libtrace)->max_msg_size = opt;
+	printf("max_msg_size : %d\n", FORMAT(libtrace)->max_msg_size);
 
 	opt = ACCE_QUEUE_DEPTH;	
         xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
@@ -629,7 +633,17 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	/* initialize library */
         xio_init();
 
-	//set options
+        /* get max msg size */
+        /* this size distinguishes between big and small msgs, where for small msgs
+	   rdma_post_send/rdma_post_recv are called as opposed to to big msgs where 
+	   rdma_write/rdma_read are called */
+	opt = ACCE_MAX_MSG_SIZE;
+        xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, sizeof(int));
+        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
+        OUTPUT->max_msg_size = opt;
+	printf("max_msg_size : %d\n", OUTPUT->max_msg_size);
+
+	//set depth
 	opt = ACCE_QUEUE_DEPTH;	
         xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_SND_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
         xio_set_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_RCV_QUEUE_DEPTH_MSGS, &opt, sizeof(int));
@@ -644,13 +658,6 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	printf("accelio queue rcv depth: %d\n", opt);
 
 
-        /* get max msg size */
-        /* this size distinguishes between big and small msgs, where for small msgs
-	   rdma_post_send/rdma_post_recv are called as opposed to to big msgs where 
-	   rdma_write/rdma_read are called */
-        xio_get_opt(NULL, XIO_OPTLEVEL_ACCELIO, XIO_OPTNAME_MAX_INLINE_XIO_DATA, &opt, &optlen);
-        OUTPUT->max_msg_size = opt;
-	debug("max_msg_size : %d\n", OUTPUT->max_msg_size);
 
 	//MSG API init ---------------------------------------------------------
 	/* prepare buffers */
@@ -1419,15 +1426,13 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	msg->out.header.iov_len = strlen((const char *)msg->out.header.iov_base) + 1;
 
 	/* data */
-	if ((int)len < OUTPUT->max_msg_size) 
+	if ((int)len <= OUTPUT->max_msg_size) 
 	{ 	/* small msgs - just set iov_base to packet pointer*/
 		msg->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
 	} 
 	else 
 	{
-		//XXX: HACK - we should not have packets > 8192...
-		error("packet > 8192 bytes !!!\n");
-		return -1;
+		error("packet > %d bytes. trying to allocate big message!!!\n", OUTPUT->max_msg_size);
 	 	/* big msgs */
 		if (data == NULL) 
 		{

@@ -34,7 +34,7 @@
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
-#define DEBUG
+//#define DEBUG
 #define ERROR_DBG
 //#define OPTION_PRINT_PACKETS
 

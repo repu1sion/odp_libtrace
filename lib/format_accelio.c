@@ -24,10 +24,12 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
+#define ACCE_VERSION		"0.95"
 #define ACCE_QUEUE_DEPTH	32768
 #define ACCE_BATCH_SIZE 	500
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
+//#define ACCE_SRV_USE_MALLOC
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
@@ -446,11 +448,16 @@ static void process_request(struct acce_format_data_t *dt, struct xio_msg *req)
 				error("failed to allocate RAM for a new packet!\n");
 			else
 			{
-				pkt->len = sglist[i].iov_len;
+				pkt->len = len;
+
+#ifndef ACCE_SRV_USE_MALLOC
+				pkt->ptr = sglist[i].iov_base;				
+#else //use malloc() to keep packet
 				pkt->ptr = malloc(len);
 				if (!pkt->ptr)
 					error("failed to allocate RAM for a new msg!\n");
 				memcpy(pkt->ptr, sglist[i].iov_base, pkt->len);
+#endif
 				num = queue_add(pkt);
 				if (num > 0)
 				{
@@ -1779,6 +1786,7 @@ static struct libtrace_format_t acce = {
 
 void acce_constructor(void) 
 {
+	printf("accelio module version: %s\n", ACCE_VERSION);
 	debug("registering acce struct with address: %p , init_output: %p\n", &acce, acce.init_output);
 	register_format(&acce);
 }

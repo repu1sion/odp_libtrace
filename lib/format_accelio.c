@@ -24,13 +24,13 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_VERSION		"0.95"
+#define ACCE_VERSION		"0.96"
 #define ACCE_QUEUE_DEPTH	32768
 #define ACCE_MAX_MSG_SIZE	16384
 #define ACCE_BATCH_SIZE 	500
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
-//#define ACCE_SRV_USE_MALLOC
+#define ACCE_SRV_USE_MALLOC
 #define SERVER_LEN 512
 
 //----- OPTIONS -----
@@ -261,6 +261,36 @@ static pckt_t* o_queue_de()
 	}
 }
 
+#ifdef DEBUG
+static void hexdump(void *addr, unsigned int size)
+{
+        unsigned int i;
+        /* move with 1 byte step */
+        unsigned char *p = (unsigned char*)addr;
+
+        /*printf("addr : %p \n", addr);*/
+
+        if (!size)
+        {
+                printf("bad size %u\n",size);
+                return;
+        }
+
+        for (i = 0; i < size; i++)
+        {
+                if (!(i % 16))    /* 16 bytes on line */
+                {
+                        if (i)
+                                printf("\n");
+                        printf("0x%lX | ", (long unsigned int)(p+i)); /* print addr at the line begin */
+                }
+                printf("%02X ", p[i]); /* space here */
+        }
+
+        printf("\n");
+}
+#endif
+
 
 //disconnect sequence:
 /* client session event: connection closed. reason: Session closed
@@ -297,6 +327,7 @@ static int on_session_event_client(struct xio_session *session,
         return 0;
 }
 
+/* we receive exactly same msg pointer we used to send packet */
 static int on_msg_send_complete_client(struct xio_session *session, 
 					struct xio_msg *msg, void *cb_user_context)
 {
@@ -304,7 +335,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
 	session_data->rcvd_cb_cnt++;
-	debug("%s() rcvd: %lu \n", __func__, session_data->rcvd_cb_cnt);
+	debug("%s() rcvd: %lu, msg: %p\n", __func__, session_data->rcvd_cb_cnt, msg);
 
         //struct test_params *test_params = (struct test_params *)cb_user_context;
         //process_message(test_params, msg);
@@ -316,6 +347,14 @@ static int on_msg_send_complete_client(struct xio_session *session,
         /* peek message from the pool */
         //msg = msg_pool_get(test_params->pool);
 
+
+	//freeing allocated ram for packet
+	if (msg->out.data_iov.sglist[0].iov_base)
+	{
+		debug("freeing allocated ram for packet: %p \n", msg->out.data_iov.sglist[0].iov_base);
+		free(msg->out.data_iov.sglist[0].iov_base);
+		msg->out.data_iov.sglist[0].iov_base = NULL;
+	}
 
         /* reset message */
         msg->in.header.iov_base = NULL;                                                                                
@@ -1379,19 +1418,24 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 
 static void acce_fin_packet(libtrace_packet_t *packet)
 {
-	debug("%s() \n", __func__);
+        debug("%s() \n", __func__);
 
-	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
-	{
-		//XXX - we should free accelio internal resources as this ptr leads to iov_base now
-		//free(packet->buffer);
-		packet->buffer = NULL;
-	}
+        if (packet->buf_control == TRACE_CTRL_EXTERNAL)
+        {
+                if (packet->buffer)
+                {
+#ifdef ACCE_SRV_USE_MALLOC
+                        debug("%s(): freeing buffer allocated for packet \n", __func__);
+                        free(packet->buffer);
+#endif
+                        packet->buffer = NULL;
+                }
+        }
 }
 
 static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
-	debug("%s() total packets: %lu \n", __func__, OUTPUT->cnt+1);
+	debug("%s() packet: %p , total packets: %lu \n", __func__, packet, OUTPUT->cnt+1);
 
 	int i = 0;
 	int numbytes = 0;
@@ -1400,6 +1444,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	uint8_t *data = NULL;
 	struct xio_msg *msg = NULL;
 	pckt_t *pkt = NULL;
+	void *p;
 	size_t len = trace_get_capture_length(packet);
 
 #if 0
@@ -1434,8 +1479,15 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 
 	/* data */
 	if ((int)len <= OUTPUT->max_msg_size) 
-	{ 	/* small msgs - just set iov_base to packet pointer*/
-		msg->out.data_iov.sglist[0].iov_base = packet->payload;	//XXX - malloc() and memcpy() here?
+	{ 	
+		p = malloc(len);
+		if (!p) 
+			{ error("failed to allocate RAM\n"); return -1; }
+		memcpy(p, packet->payload, len);
+		msg->out.data_iov.sglist[0].iov_base = p;
+#ifdef DEBUG
+		hexdump(msg->out.data_iov.sglist[0].iov_base, 16);
+#endif
 	} 
 	else 
 	{
@@ -1477,6 +1529,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		pkt->ptr = (void*)msg;
 		num = o_queue_add(pkt); num = num;
 		OUTPUT->cnt++;
+		numbytes = len;
 		debug("packet added to output queue. now in queue: %d, pkts went to sending: %lu \n",
 			num, OUTPUT->cnt);
 	}

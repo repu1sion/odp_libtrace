@@ -53,12 +53,17 @@ endif
 
 #ODP support
 NATIVEFORMATS+= format_odp.c format_parquet.c format_kafka.c format_accelio.c format_spdk.c
+if HAVE_WANDDER
+ETSISOURCES=format_etsilive.c
+else
+ETSISOURCES=
+endif
 
 libtrace_la_SOURCES = trace.c trace_parallel.c common.h \
 		format_erf.c format_pcap.c format_legacy.c \
 		format_rt.c format_helper.c format_helper.h format_pcapfile.c \
 		format_duck.c format_tsh.c $(NATIVEFORMATS) $(BPFFORMATS) \
-		format_atmhdr.c format_pcapng.c format_etsilive.c \
+		format_atmhdr.c format_pcapng.c \
 		libtrace_int.h lt_inttypes.h lt_bswap.h \
 		linktypes.c link_wireless.c byteswap.c \
 		checksum.c checksum.h \
@@ -66,7 +71,7 @@ libtrace_la_SOURCES = trace.c trace_parallel.c common.h \
 		protocols_transport.c protocols.h protocols_ospf.c \
 		protocols_application.c \
 		$(DAGSOURCE) format_erf.h format_ndag.c format_ndag.h \
-		$(BPFJITSOURCE) \
+		$(BPFJITSOURCE) $(ETSISOURCES) \
 		libtrace_arphrd.h \
 		data-struct/ring_buffer.c data-struct/vector.c \
 		data-struct/message_queue.c data-struct/deque.c \

@@ -24,10 +24,10 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_VERSION		"0.96"
-#define ACCE_QUEUE_DEPTH	32768
+#define ACCE_VERSION		"0.97"
+#define ACCE_QUEUE_DEPTH	1048576
 #define ACCE_MAX_MSG_SIZE	16384
-#define ACCE_BATCH_SIZE 	500
+#define ACCE_BATCH_SIZE 	5000
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define ACCE_SRV_USE_MALLOC
@@ -334,8 +334,28 @@ static int on_msg_send_complete_client(struct xio_session *session,
 	session = session;
         struct acce_format_data_out_t *session_data = (struct acce_format_data_out_t*)cb_user_context;
 
+	static int showerror = 1;
+	static time_t errortime = 0;
+
 	session_data->rcvd_cb_cnt++;
 	debug("%s() rcvd: %lu, msg: %p\n", __func__, session_data->rcvd_cb_cnt, msg);
+
+	if (session_data->cnt - session_data->rcvd_cb_cnt > 50000)
+	{
+		if (showerror)
+		{
+			errortime = time(NULL);
+			error("%s diff between msgs and callbacks is: %lu. msgs: %lu, callbacks: %lu \n", 
+				ctime(&errortime), session_data->cnt - session_data->rcvd_cb_cnt,
+				 session_data->cnt, session_data->rcvd_cb_cnt);
+			showerror = 0;
+		}
+		else
+		{
+			if (time(NULL) - errortime >= 5)
+				showerror = 1;
+		}
+	}
 
         //struct test_params *test_params = (struct test_params *)cb_user_context;
         //process_message(test_params, msg);
@@ -347,6 +367,12 @@ static int on_msg_send_complete_client(struct xio_session *session,
         /* peek message from the pool */
         //msg = msg_pool_get(test_params->pool);
 
+	
+	if (msg->out.header.iov_base)
+	{
+		free(msg->out.header.iov_base);
+		msg->out.header.iov_base = NULL;
+	}
 
 	//freeing allocated ram for packet
 	if (msg->out.data_iov.sglist[0].iov_base)
@@ -355,6 +381,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
 		free(msg->out.data_iov.sglist[0].iov_base);
 		msg->out.data_iov.sglist[0].iov_base = NULL;
 	}
+
 
         /* reset message */
         msg->in.header.iov_base = NULL;                                                                                
@@ -386,6 +413,7 @@ static int on_msg_send_complete_client(struct xio_session *session,
 static struct xio_session_ops ses_ops = {
         .on_session_event               =  on_session_event_client, 
 	.on_ow_msg_send_complete        =  on_msg_send_complete_client,
+	//.on_ow_msg_send_complete        =  NULL,
         .on_session_established         =  NULL,
         .on_msg                         =  NULL,
         .on_msg_error                   =  NULL
@@ -846,7 +874,13 @@ static void* output_loop(void *arg)
 	{
 		xio_context_run_loop(OUTPUT->ctx, XIO_INFINITE);
 		//we get to this line once the stopping thread will call method xio_context_stop_loop()
+		//error("before mutex o_queue_num is : %d \n", o_queue_num);
 		pthread_mutex_lock(&o_mutex_lock);	//lock used outside loop to send all queue at once
+
+		if (o_queue_num > ACCE_BATCH_SIZE+1000)
+		{
+			error("o_queue_num is big: %d \n", o_queue_num);
+		}
 		while (o_queue_num)
 		{
 			pkt = o_queue_de();
@@ -1474,7 +1508,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	//set msg->out
 	msg->out.sgl_type = XIO_SGL_TYPE_IOV;
 	msg->out.data_iov.max_nents = XIO_IOVLEN;
-	msg->out.header.iov_base = strdup("msg header");
+	msg->out.header.iov_base = strdup("m");
 	msg->out.header.iov_len = strlen((const char *)msg->out.header.iov_base) + 1;
 
 	/* data */
@@ -1519,6 +1553,16 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		}
 	}
 
+
+	//if queue is already full - just sleep here till it will be empty again
+	//so we don't add packets till we send whole batch
+#if 1
+	while (o_queue_num >= ACCE_BATCH_SIZE)
+	{
+		usleep(10000);
+	}
+#endif
+
 	//adding to queue
 	pkt = queue_create_pckt();
 	if (!pkt)
@@ -1534,8 +1578,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 			num, OUTPUT->cnt);
 	}
 
-	if (!(OUTPUT->cnt % ACCE_BATCH_SIZE))
+	//if (!(OUTPUT->cnt % ACCE_BATCH_SIZE))
+	if (o_queue_num >= ACCE_BATCH_SIZE)
+	{
+		//error("stop loop. cnt: %d , o_queue_num: %d \n", OUTPUT->cnt, o_queue_num);
 		xio_context_stop_loop(OUTPUT->ctx);
+	}
 	
 #if 0
 	if (xio_send_msg(OUTPUT->conn, msg) == -1) 

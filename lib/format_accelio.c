@@ -24,10 +24,10 @@
 #define WIRELEN_DROPLEN 4
 
 //----- CONFIG -----
-#define ACCE_VERSION		"0.97"
+#define ACCE_VERSION		"0.98"
 #define ACCE_QUEUE_DEPTH	1048576
 #define ACCE_MAX_MSG_SIZE	16384
-#define ACCE_BATCH_SIZE 	5000
+#define ACCE_BATCH_SIZE 	10000
 #define ACCE_SERVER 		"localhost"
 #define ACCE_PORT 		"9992"
 #define ACCE_SRV_USE_MALLOC
@@ -105,6 +105,7 @@ struct acce_format_data_out_t
         uint64_t cnt;
         int max_msg_size;
 	unsigned char conn_established;
+	int batchsize;
 	
 	//other vars
 	char *path;
@@ -336,18 +337,32 @@ static int on_msg_send_complete_client(struct xio_session *session,
 
 	static int showerror = 1;
 	static time_t errortime = 0;
+	static unsigned long olddiff = 0;
+	unsigned long diff = 0;
 
 	session_data->rcvd_cb_cnt++;
 	debug("%s() rcvd: %lu, msg: %p\n", __func__, session_data->rcvd_cb_cnt, msg);
 
-	if (session_data->cnt - session_data->rcvd_cb_cnt > 50000)
+	diff = session_data->cnt - session_data->rcvd_cb_cnt;
+	if (diff > 50000)
 	{
 		if (showerror)
 		{
+			if (diff > olddiff)
+			{
+				if (session_data->batchsize > 2000)
+				{
+					session_data->batchsize -= 2000;
+					error("batchsize set to %d \n", session_data->batchsize);
+					xio_context_stop_loop(session_data->ctx); //we need it to forse sending queue
+				}
+				
+			}
+			olddiff = diff;
+
 			errortime = time(NULL);
 			error("%s diff between msgs and callbacks is: %lu. msgs: %lu, callbacks: %lu \n", 
-				ctime(&errortime), session_data->cnt - session_data->rcvd_cb_cnt,
-				 session_data->cnt, session_data->rcvd_cb_cnt);
+				ctime(&errortime), diff, session_data->cnt, session_data->rcvd_cb_cnt);
 			showerror = 0;
 		}
 		else
@@ -701,6 +716,7 @@ static int acce_init_output(libtrace_out_t *libtrace)
 	OUTPUT->cnt = 0;
 	OUTPUT->rcvd_cb_cnt = 0;
 	OUTPUT->conn_established = 0;
+	OUTPUT->batchsize = ACCE_BATCH_SIZE;
 
 	memset(&params, 0, sizeof(params));
 	//init accelio ---------------------------------------------------------
@@ -795,7 +811,12 @@ static int acce_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 //we run it in separate thread to avoid blocking issues
 static void* input_loop(void *arg)
 {
+	int rv;
 	libtrace_t *libtrace = (libtrace_t*)arg;
+
+        //set higher priority
+        rv = nice(-20);
+        printf("set priority for input events thread to : %d \n", rv);
 
 	xio_context_run_loop(FORMAT(libtrace)->ctx, XIO_INFINITE);
 
@@ -869,6 +890,11 @@ static void* output_loop(void *arg)
 	libtrace_out_t *libtrace = (libtrace_out_t*)arg;
 	pckt_t *pkt = NULL;
 	struct xio_msg *msg = NULL;
+	int rv;
+
+	//set higher priority
+        rv = nice(-20);
+        printf("set priority for output events thread to : %d \n", rv);
 
 	while(1)
 	{
@@ -877,7 +903,7 @@ static void* output_loop(void *arg)
 		//error("before mutex o_queue_num is : %d \n", o_queue_num);
 		pthread_mutex_lock(&o_mutex_lock);	//lock used outside loop to send all queue at once
 
-		if (o_queue_num > ACCE_BATCH_SIZE+1000)
+		if (o_queue_num > OUTPUT->batchsize + 1000)
 		{
 			error("o_queue_num is big: %d \n", o_queue_num);
 		}
@@ -977,6 +1003,9 @@ static int acce_fin_output(libtrace_out_t *libtrace)
 	printf("%s() output is over. disconnect in 5 secs\n", __func__);
 	xio_context_stop_loop(OUTPUT->ctx);
         sleep(5);
+
+	error("packets sent: %lu, callbacks received: %lu, diff: %lu \n", 
+		OUTPUT->cnt, OUTPUT->rcvd_cb_cnt, OUTPUT->cnt - OUTPUT->rcvd_cb_cnt);
 
 	xio_disconnect(OUTPUT->conn);
 
@@ -1553,15 +1582,12 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 		}
 	}
 
-
-	//if queue is already full - just sleep here till it will be empty again
-	//so we don't add packets till we send whole batch
-#if 1
-	while (o_queue_num >= ACCE_BATCH_SIZE)
+	//we should let the sending thread to have some time for receiving callbacks
+	//so we sleep here and don't call stop_loop() and don't increase queue, etc
+	while (o_queue_num >= OUTPUT->batchsize)
 	{
 		usleep(10000);
 	}
-#endif
 
 	//adding to queue
 	pkt = queue_create_pckt();
@@ -1579,7 +1605,7 @@ static int acce_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet
 	}
 
 	//if (!(OUTPUT->cnt % ACCE_BATCH_SIZE))
-	if (o_queue_num >= ACCE_BATCH_SIZE)
+	if (o_queue_num >= OUTPUT->batchsize)
 	{
 		//error("stop loop. cnt: %d , o_queue_num: %d \n", OUTPUT->cnt, o_queue_num);
 		xio_context_stop_loop(OUTPUT->ctx);

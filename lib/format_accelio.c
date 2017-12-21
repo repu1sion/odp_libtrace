@@ -1254,7 +1254,7 @@ static int acce_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 				break;
 			}
 		}
-		//usleep(1);	//let's sleep minimal interval
+		usleep(10000);
 	}
 
 	if (numbytes == -1) 

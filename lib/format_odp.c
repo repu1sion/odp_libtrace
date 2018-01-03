@@ -1061,6 +1061,6 @@ static struct libtrace_format_t lodp = {
 
 void odp_constructor(void) 
 {
-	printf("registering odp struct with address: %p , odp_init_output: %p\n", &lodp, lodp.init_output);
+	debug("registering odp struct with address: %p , odp_init_output: %p\n", &lodp, lodp.init_output);
 	register_format(&lodp);
 }

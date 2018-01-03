@@ -1067,6 +1067,6 @@ static struct libtrace_format_t parq = {
 
 void parq_constructor(void) 
 {
-	printf("registering parq struct with address: %p , odp_init_output: %p\n", &parq, parq.init_output);
+	debug("registering parq struct with address: %p , odp_init_output: %p\n", &parq, parq.init_output);
 	register_format(&parq);
 }

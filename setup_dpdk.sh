@@ -1,6 +1,6 @@
 #!/bin/bash
 
-export RTE_SDK=/mnt/raw/gdwk/dpdk/dpdk/
+export RTE_SDK=/root/dpdk/
 export RTE_TARGET=x86_64-native-linuxapp-gcc
 
 # loading dpdk kernel modules
@@ -11,7 +11,7 @@ sudo insmod ./igb_uio.ko
 lsmod | grep -i uio
 
 # bind network card to dpdk driver
-cd $RTE_SDK/tools/
+cd $RTE_SDK/usertools/
 sudo ./dpdk-devbind.py -b igb_uio 0000:03:00.0
 sudo ./dpdk-devbind.py --status
 

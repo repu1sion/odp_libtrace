@@ -33,7 +33,7 @@ fi
 
 # search for odp-dpdk
 echo -e "${WHITE}searching for odp-dpdk in $SEARCH_PATH ${NC}"
-ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp-dpdk' | awk '{if (NR==1) print $1}'`
+ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp' | awk '{if (NR==1) print $1}'`
 if [ ! -z $ODP_DPDK_PATH ]; then
 	echo -e "${WHITE}odp-dpdk found successfully. path is : $ODP_DPDK_PATH ${NC}"
 else
@@ -58,7 +58,7 @@ fi
 # configuring
 ./bootstrap.sh
 
-./configure CFLAGS="-shared-libgcc -I${ODP_DPDK_PATH}/${HEADER1} -I${ODP_DPDK_PATH}/${HEADER2} -I${ODP_DPDK_PATH}/${HEADER3}"
+./configure CFLAGS="-g -shared-libgcc -I${ODP_DPDK_PATH}/${HEADER1} -I${ODP_DPDK_PATH}/${HEADER2} -I${ODP_DPDK_PATH}/${HEADER3}"
 
 #if [ $NUMCORES -le 2 ]; then
 #	echo -e "${WHITE}configuring for laptop ${NC}"

@@ -32,7 +32,6 @@
 #define WIRELEN_DROPLEN 4
 
 //----- OPTIONS -----
-//#define MULTI_INPUT_QUEUES
 //#define DEBUG
 //#define OPTION_PRINT_PACKETS
 
@@ -108,12 +107,11 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
+	int n_odp_workers = 1;	//XXX - get correct number of threads from uridata
+	int i;
 	//int ret; //returned error codes
-	//struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
-	//char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
 	int num_cpu; /* The number of CPUs in the system */
-	//int my_cpu; /* The CPU number we want to bind to */
-	//odp vars
+
 	odp_pool_t pool;
 	//odp_pktio_t pktio;
         odp_pool_param_t params;
@@ -177,17 +175,16 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	//ODP setup ------------------------------------------------------------
 	/* Init ODP before calling anything else */
-	//@first param - odp params, @second param - dpdk params (passed through)
+	//@second param - odp params, @third param - dpdk params (passed through)
 	//const odp_platform_init_t *platform_params
+	// The handle is used in other calls (e.g. odp_init_local()) as a reference to the instance
         if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);
         }
 
-        /* Create thread structure for ODP */		//XXX - maybe ODP_THREAD_CONTROL ?
-	int i;
-	for (i = 0; i < 1; i++)
+	for (i = 0; i < n_odp_workers; i++)
 	{
 		if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
 		{
@@ -244,16 +241,9 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
         //setting queue param
         odp_pktin_queue_param_init(&pktin_param);
-	//-----multiqueues-----
 	pktin_param.op_mode     = ODP_PKTIO_OP_MT_UNSAFE;
 	pktin_param.hash_enable = 1;
-#ifdef MULTI_INPUT_QUEUES
-	pktin_param.num_queues  = 4;			//XXX - HARDCODE
-#else
-	pktin_param.num_queues  = 1;
-
-#endif
-	//-----multiqueues-----
+	pktin_param.num_queues  = n_odp_workers;
         pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
         pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
 
@@ -394,7 +384,7 @@ static int lodp_pstart_input(libtrace_t *libtrace)
 	odp_per_stream_t empty_stream;
 	int num_threads = libtrace->perpkt_thread_count;
 
-	debug("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
+	printf("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
 
 	memset(&empty_stream, 0x0, sizeof(odp_per_stream_t));
 

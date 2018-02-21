@@ -43,6 +43,7 @@
 
 struct odp_format_data_t {
 	odp_instance_t odp_instance;
+	int num_threads;		//keep number of threads passed from utility command line
 	int pvt;			//for private data saving
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
@@ -107,7 +108,7 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
-	int n_odp_workers = 1;	//XXX - get correct number of threads from uridata
+	int n_odp_workers = 1;
 	int i;
 	//int ret; //returned error codes
 	int num_cpu; /* The number of CPUs in the system */
@@ -124,6 +125,11 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	if (strlen(odp_error) < (size_t)errlen) 
 		strcpy(err, odp_error);
+
+	if (format_data->num_threads)
+		n_odp_workers = format_data->num_threads;
+
+	printf("n_odp_workers: %d\n", n_odp_workers);
 
 	//DPDK setup -----------------------------------------------------------
 	//we need to set command line for DPDK which we will pass through ODP
@@ -276,6 +282,7 @@ static int lodp_init_input(libtrace_t *libtrace)
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
+	FORMAT(libtrace)->num_threads = libtrace->perpkt_thread_count;
 
 	/* Make our first stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));

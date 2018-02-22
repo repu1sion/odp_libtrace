@@ -120,14 +120,14 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
         odp_pktin_queue_param_t pktin_param;
 	odp_pktio_capability_t capa;
 	char devname[] = "0";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
-	char dpdk_params[256] = {0};
+	//char dpdk_params[256] = {0};
 	char *odp_error = "No error";
 
 	if (strlen(odp_error) < (size_t)errlen) 
 		strcpy(err, odp_error);
 
 	if (format_data->num_threads)
-		n_odp_workers = format_data->num_threads;
+		n_odp_workers = format_data->num_threads; //XXX - that's too early, we always have 0 there!!!
 
 	printf("n_odp_workers: %d\n", n_odp_workers);
 
@@ -161,9 +161,11 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	//forming params -------------------------------------------------------
 	printf("uridata: %s \n", uridata);
+/*
 	strcpy(dpdk_params, "-c 0xF -n 4 -w ");
 	strcat(dpdk_params, uridata);
 	printf("dpdk params passed: %s \n", dpdk_params);
+*/
 
 
 	/* This allows the user to specify the core - we would try to do this
@@ -184,7 +186,8 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 	//@second param - odp params, @third param - dpdk params (passed through)
 	//const odp_platform_init_t *platform_params
 	// The handle is used in other calls (e.g. odp_init_local()) as a reference to the instance
-        if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
+        //if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
+        if (odp_init_global(&format_data->odp_instance, NULL, NULL))
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);

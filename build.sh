@@ -33,7 +33,8 @@ fi
 
 # search for odp-dpdk
 echo -e "${WHITE}searching for odp-dpdk in $SEARCH_PATH ${NC}"
-ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp' | awk '{if (NR==1) print $1}'`
+ODP_DPDK_PATH=`dirname $(find / -mount -type d -name 'odp' -exec sh -c "find '{}' -maxdepth 1 -name README" \;)`
+#ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp' | awk '{if (NR==1) print $1}'`
 if [ ! -z $ODP_DPDK_PATH ]; then
 	echo -e "${WHITE}odp-dpdk found successfully. path is : $ODP_DPDK_PATH ${NC}"
 else

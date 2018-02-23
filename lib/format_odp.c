@@ -193,16 +193,11 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
                 exit(EXIT_FAILURE);
         }
 
-	for (i = 0; i < n_odp_workers; i++)
-	{
-		if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
-		{
-			fprintf(stderr, "Error: ODP local init failed.\n");
-			exit(EXIT_FAILURE);
-		}
-		else
-			printf("worker thread #%d was inited successfully\n", i);
-	}
+        if (odp_init_local(format_data->odp_instance, ODP_THREAD_CONTROL))
+        {
+                fprintf(stderr, "Error: ODP local init failed.\n");
+                exit(EXIT_FAILURE);
+        }
 
         /* Creating pool */
         pool = odp_pool_lookup("packet_pool");
@@ -230,7 +225,7 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
         //setting pktio_param
         odp_pktio_param_init(&pktio_param);
-        pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
+        pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
 
         /* Open a packet IO instance */
 	fprintf(stdout, "calling odp_pktio_open()\n");
@@ -250,7 +245,7 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
         //setting queue param
         odp_pktin_queue_param_init(&pktin_param);
-	pktin_param.op_mode     = ODP_PKTIO_OP_MT_UNSAFE;
+	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
 	pktin_param.hash_enable = 1;
 	pktin_param.num_queues  = n_odp_workers;
         pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;

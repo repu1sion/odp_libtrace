@@ -108,8 +108,8 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
-	int n_odp_workers = 1;
-	int i;
+	int n_odp_workers = 4;
+	//int i;
 	//int ret; //returned error codes
 	int num_cpu; /* The number of CPUs in the system */
 
@@ -119,9 +119,11 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
         odp_pktio_param_t pktio_param;
         odp_pktin_queue_param_t pktin_param;
 	odp_pktio_capability_t capa;
-	char devname[] = "0";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
+	char devname[] = "1";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
 	//char dpdk_params[256] = {0};
 	char *odp_error = "No error";
+
+	debug("%s() \n", __func__);
 
 	if (strlen(odp_error) < (size_t)errlen) 
 		strcpy(err, odp_error);
@@ -246,7 +248,7 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
         //setting queue param
         odp_pktin_queue_param_init(&pktin_param);
 	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
-	pktin_param.hash_enable = 1;
+	pktin_param.hash_enable = 0;
 	pktin_param.num_queues  = n_odp_workers;
         pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
         pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
@@ -450,6 +452,9 @@ static int lodp_fin_input(libtrace_t *libtrace)
         odp_pktio_stop(FORMAT(libtrace)->pktio);
         odp_pktio_close(FORMAT(libtrace)->pktio);
 	printf("pktio stopped and closed \n");
+
+	odp_term_global(FORMAT(libtrace)->odp_instance);
+	printf("odp stopped\n");
 
 	if (libtrace->io)
 	{
@@ -942,13 +947,20 @@ static uint64_t lodp_get_erf_timestamp(const libtrace_packet_t *packet UNUSED)
 #endif
 
 //libtrace creates threads with pthread_create(), then fills libtrace_thread_t struct and passes ptr to it here (*t)
+//this seems to be called from every new thread from perpkt_threads_entry() - which is thread's routine
 static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, bool reader)
 {
 	int rv = 0;
 
-	libtrace=libtrace;
-
 	debug("%s() \n", __func__);
+
+	//trying to register every! thread as ODP WORKER, even not readers
+	rv = odp_init_local(FORMAT(libtrace)->odp_instance, ODP_THREAD_WORKER);
+	if (rv)
+	{
+		printf("failed to register reader thread as ODP WORKER!\n");
+		return -1;
+	}
 
 	if (reader)
 	{
@@ -958,6 +970,8 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 		//Bind thread and its per_thread struct
 		if(t->type == THREAD_PERPKT) 
 		{
+
+
 			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream, t->perpkt_num)->data;
 			if (t->format_data == NULL) 
 			{
@@ -979,13 +993,15 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 
 static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
 {
-	libtrace=libtrace;
+	libtrace = libtrace;
 	t = t;
 
 	debug("%s() \n", __func__);
 
 	debug("unregistering thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
 		t, t->type, t->tid, t->perpkt_num);
+
+	odp_term_local();
 
 	return;
 }

@@ -399,7 +399,8 @@ enum base_format_t {
 	TRACE_FORMAT_KAFKA        =20,
 	TRACE_FORMAT_ACCE         =21,
         TRACE_FORMAT_PCAPNG       =22,    /**< PCAP-NG trace file */
-        TRACE_FORMAT_NDAG         =23     /**< DAG multicast over a network */
+        TRACE_FORMAT_NDAG         =23,    /**< DAG multicast over a network */
+	TRACE_FORMAT_DPDK_NDAG    =24,    /**< DAG multicast over a network, received via DPDK */
 };
 
 /** RT protocol packet types */

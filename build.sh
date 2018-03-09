@@ -22,7 +22,7 @@ HEADER1="include"
 HEADER2="platform/linux-dpdk/include"
 HEADER3="platform/linux-dpdk/arch/x86"
 
-ODP_DPDK_PATH=""
+ODP_PATH=""
 SEARCH_PATH="/"
 NUMCORES=$(nproc)
 
@@ -32,13 +32,13 @@ if [ $# -eq 1 ]; then
 fi
 
 # search for odp-dpdk
-echo -e "${WHITE}searching for odp-dpdk in $SEARCH_PATH ${NC}"
-ODP_DPDK_PATH=`dirname $(find / -mount -type d -name 'odp' -exec sh -c "find '{}' -maxdepth 1 -name README" \;)`
-#ODP_DPDK_PATH=`find $SEARCH_PATH -mount -type d -name 'odp' | awk '{if (NR==1) print $1}'`
-if [ ! -z $ODP_DPDK_PATH ]; then
-	echo -e "${WHITE}odp-dpdk found successfully. path is : $ODP_DPDK_PATH ${NC}"
+echo -e "${WHITE}searching for odp in $SEARCH_PATH ${NC}"
+ODP_PATH=`dirname $(find $SEARCH_PATH -mount -type d -name 'odp' -exec sh -c "find '{}' -maxdepth 1 -name README" \;)`
+#ODP_PATH=`find $SEARCH_PATH -mount -type d -name 'odp' | awk '{if (NR==1) print $1}'`
+if [ ! -z $ODP_PATH ]; then
+	echo -e "${WHITE}odp found successfully. path is : $ODP_PATH ${NC}"
 else
-	echo -e "${RED}odp-dpdk was not found. please try to pass its path as an argument to that script ${NC}"
+	echo -e "${RED}odp was not found. please try to pass its path as an argument to that script ${NC}"
 	exit 1
 fi
 
@@ -59,7 +59,7 @@ fi
 # configuring
 ./bootstrap.sh
 
-./configure CFLAGS="-g -shared-libgcc -I${ODP_DPDK_PATH}/${HEADER1} -I${ODP_DPDK_PATH}/${HEADER2} -I${ODP_DPDK_PATH}/${HEADER3}"
+./configure CFLAGS="-g -shared-libgcc -I${ODP_PATH}/${HEADER1} -I${ODP_PATH}/${HEADER2} -I${ODP_PATH}/${HEADER3}"
 
 #if [ $NUMCORES -le 2 ]; then
 #	echo -e "${WHITE}configuring for laptop ${NC}"

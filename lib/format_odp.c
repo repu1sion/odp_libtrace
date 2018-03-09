@@ -4,6 +4,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
 #include <errno.h>
 #include <assert.h>
 #include <stdio.h>
@@ -31,7 +32,6 @@
 #define WIRELEN_DROPLEN 4
 
 //----- OPTIONS -----
-//#define MULTI_INPUT_QUEUES
 //#define DEBUG
 //#define OPTION_PRINT_PACKETS
 
@@ -43,6 +43,7 @@
 
 struct odp_format_data_t {
 	odp_instance_t odp_instance;
+	int num_threads;		//keep number of threads passed from utility command line
 	int pvt;			//for private data saving
 	unsigned int pkts_read;
 	odp_pktio_t pktio;
@@ -107,24 +108,30 @@ static int parse_pciaddr(char *str, struct rte_pci_addr *addr, long *core)
 
 static int lodp_init_environment(char *uridata, struct odp_format_data_t *format_data, char *err, int errlen)
 {
+	int n_odp_workers = 4;
+	//int i;
 	//int ret; //returned error codes
-	//struct rte_pci_addr use_addr; /* The only address that we don't blacklist - needed for DPDK */
-	//char cpu_number[10] = {0}; /* The CPU mask we want to bind to */
 	int num_cpu; /* The number of CPUs in the system */
-	//int my_cpu; /* The CPU number we want to bind to */
-	//odp vars
+
 	odp_pool_t pool;
 	//odp_pktio_t pktio;
         odp_pool_param_t params;
         odp_pktio_param_t pktio_param;
         odp_pktin_queue_param_t pktin_param;
 	odp_pktio_capability_t capa;
-	char devname[] = "0";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
-	char dpdk_params[256] = {0};
+	char devname[] = "1";		// - IMPORTANT - this is dpdk port number, should be 0! Only digits accepted!
+	//char dpdk_params[256] = {0};
 	char *odp_error = "No error";
+
+	debug("%s() \n", __func__);
 
 	if (strlen(odp_error) < (size_t)errlen) 
 		strcpy(err, odp_error);
+
+	if (format_data->num_threads)
+		n_odp_workers = format_data->num_threads; //XXX - that's too early, we always have 0 there!!!
+
+	printf("n_odp_workers: %d\n", n_odp_workers);
 
 	//DPDK setup -----------------------------------------------------------
 	//we need to set command line for DPDK which we will pass through ODP
@@ -156,9 +163,11 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	//forming params -------------------------------------------------------
 	printf("uridata: %s \n", uridata);
+/*
 	strcpy(dpdk_params, "-c 0xF -n 4 -w ");
 	strcat(dpdk_params, uridata);
 	printf("dpdk params passed: %s \n", dpdk_params);
+*/
 
 
 	/* This allows the user to specify the core - we would try to do this
@@ -176,26 +185,21 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
 	//ODP setup ------------------------------------------------------------
 	/* Init ODP before calling anything else */
-	//@first param - odp params, @second param - dpdk params (passed through)
+	//@second param - odp params, @third param - dpdk params (passed through)
 	//const odp_platform_init_t *platform_params
-        if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
+	// The handle is used in other calls (e.g. odp_init_local()) as a reference to the instance
+        //if (odp_init_global(&format_data->odp_instance, NULL, (odp_platform_init_t*)dpdk_params))
+        if (odp_init_global(&format_data->odp_instance, NULL, NULL))
 	{
                 fprintf(stderr, "Error: ODP global init failed.\n");
                 exit(EXIT_FAILURE);
         }
 
-        /* Create thread structure for ODP */		//XXX - maybe ODP_THREAD_CONTROL ?
-	int i;
-	for (i = 0; i < 1; i++)
-	{
-		if (odp_init_local(format_data->odp_instance, ODP_THREAD_WORKER))
-		{
-			fprintf(stderr, "Error: ODP local init failed.\n");
-			exit(EXIT_FAILURE);
-		}
-		else
-			printf("worker thread #%d was inited successfully\n", i);
-	}
+        if (odp_init_local(format_data->odp_instance, ODP_THREAD_CONTROL))
+        {
+                fprintf(stderr, "Error: ODP local init failed.\n");
+                exit(EXIT_FAILURE);
+        }
 
         /* Creating pool */
         pool = odp_pool_lookup("packet_pool");
@@ -223,7 +227,7 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
         //setting pktio_param
         odp_pktio_param_init(&pktio_param);
-        pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;     //XXX - if wont work try MODE_QUEUE
+        pktio_param.in_mode = ODP_PKTIN_MODE_SCHED;
 
         /* Open a packet IO instance */
 	fprintf(stdout, "calling odp_pktio_open()\n");
@@ -243,16 +247,9 @@ static int lodp_init_environment(char *uridata, struct odp_format_data_t *format
 
         //setting queue param
         odp_pktin_queue_param_init(&pktin_param);
-	//-----multiqueues-----
-	pktin_param.op_mode     = ODP_PKTIO_OP_MT_UNSAFE;
-	pktin_param.hash_enable = 1;
-#ifdef MULTI_INPUT_QUEUES
-	pktin_param.num_queues  = 4;			//XXX - HARDCODE
-#else
-	pktin_param.num_queues  = 1;
-
-#endif
-	//-----multiqueues-----
+	pktin_param.op_mode     = ODP_PKTIO_OP_MT;
+	pktin_param.hash_enable = 0;
+	pktin_param.num_queues  = n_odp_workers;
         pktin_param.queue_param.sched.sync = ODP_SCHED_SYNC_ATOMIC;
         pktin_param.queue_param.sched.prio = ODP_SCHED_PRIO_DEFAULT;
 
@@ -285,6 +282,7 @@ static int lodp_init_input(libtrace_t *libtrace)
 	libtrace->format_data = malloc(sizeof(struct odp_format_data_t));
 	FORMAT(libtrace)->pvt = 0xFAFAFAFA;
 	FORMAT(libtrace)->pkts_read = 0;
+	FORMAT(libtrace)->num_threads = libtrace->perpkt_thread_count;
 
 	/* Make our first stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(odp_per_stream_t));
@@ -393,7 +391,7 @@ static int lodp_pstart_input(libtrace_t *libtrace)
 	odp_per_stream_t empty_stream;
 	int num_threads = libtrace->perpkt_thread_count;
 
-	debug("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
+	printf("%s() num_threads: %d \n", __func__, libtrace->perpkt_thread_count);
 
 	memset(&empty_stream, 0x0, sizeof(odp_per_stream_t));
 
@@ -454,6 +452,9 @@ static int lodp_fin_input(libtrace_t *libtrace)
         odp_pktio_stop(FORMAT(libtrace)->pktio);
         odp_pktio_close(FORMAT(libtrace)->pktio);
 	printf("pktio stopped and closed \n");
+
+	odp_term_global(FORMAT(libtrace)->odp_instance);
+	printf("odp stopped\n");
 
 	if (libtrace->io)
 	{
@@ -946,13 +947,20 @@ static uint64_t lodp_get_erf_timestamp(const libtrace_packet_t *packet UNUSED)
 #endif
 
 //libtrace creates threads with pthread_create(), then fills libtrace_thread_t struct and passes ptr to it here (*t)
+//this seems to be called from every new thread from perpkt_threads_entry() - which is thread's routine
 static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, bool reader)
 {
 	int rv = 0;
 
-	libtrace=libtrace;
-
 	debug("%s() \n", __func__);
+
+	//trying to register every! thread as ODP WORKER, even not readers
+	rv = odp_init_local(FORMAT(libtrace)->odp_instance, ODP_THREAD_WORKER);
+	if (rv)
+	{
+		printf("failed to register reader thread as ODP WORKER!\n");
+		return -1;
+	}
 
 	if (reader)
 	{
@@ -962,6 +970,8 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 		//Bind thread and its per_thread struct
 		if(t->type == THREAD_PERPKT) 
 		{
+
+
 			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream, t->perpkt_num)->data;
 			if (t->format_data == NULL) 
 			{
@@ -983,13 +993,15 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 
 static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
 {
-	libtrace=libtrace;
+	libtrace = libtrace;
 	t = t;
 
 	debug("%s() \n", __func__);
 
 	debug("unregistering thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
 		t, t->type, t->tid, t->perpkt_num);
+
+	odp_term_local();
 
 	return;
 }

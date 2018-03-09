@@ -809,6 +809,7 @@ DLLEXPORT libtrace_packet_t *trace_create_packet(void)
                 return NULL;
 
 	packet->buf_control=TRACE_CTRL_PACKET;
+        pthread_mutex_init(&(packet->ref_lock), NULL);
 	trace_clear_cache(packet);
 	return packet;
 }
@@ -860,6 +861,7 @@ DLLEXPORT void trace_destroy_packet(libtrace_packet_t *packet) {
 	if (packet->buf_control == TRACE_CTRL_PACKET && packet->buffer) {
 		free(packet->buffer);
 	}
+        pthread_mutex_destroy(&(packet->ref_lock));
 	packet->buf_control=(buf_control_t)'\0';
 				/* A "bad" value to force an assert
 				 * if this packet is ever reused
@@ -2332,6 +2334,7 @@ void trace_clear_cache(libtrace_packet_t *packet) {
 	packet->l2_remaining = 0;
 	packet->l3_remaining = 0;
 	packet->l4_remaining = 0;
+        packet->refcount = 0;
 
 }
 

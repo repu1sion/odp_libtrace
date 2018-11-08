@@ -990,6 +990,7 @@ DLLEXPORT int trace_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			/* Store the trace we are reading from into the packet opaque 
 			 * structure */
 			packet->trace = libtrace;
+                        packet->which_trace_start = libtrace->startcount;
 			ret=libtrace->format->read_packet(libtrace,packet);
 			if (ret==(size_t)READ_MESSAGE ||
                             ret==(size_t)-1 || ret==0) {
@@ -1023,7 +1024,6 @@ DLLEXPORT int trace_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
                         if (packet->order == 0) {
         			trace_packet_set_order(packet, libtrace->sequence_number);
                         }
-                        packet->which_trace_start = libtrace->startcount;
 	        	++libtrace->sequence_number;
 			if (!libtrace_parallel && packet->trace == libtrace)
                                 libtrace->last_packet = packet;

@@ -520,6 +520,7 @@ DLLEXPORT libtrace_out_t *trace_create_output(const char *uri) {
 			case 0: /* success */
 				break;
 			default:
+				/* Should never get here */
 				assert(!"Internal error: init_output() should return -1 for failure, or 0 for success");
 		}
 	} else {
@@ -1004,8 +1005,10 @@ DLLEXPORT int trace_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	if (!libtrace) {
 		return TRACE_ERR_NULL_TRACE;
 	}
+
 	if (trace_is_err(libtrace))
 		return -1;
+
 	if (!libtrace->started) {
 		trace_set_err(libtrace,TRACE_ERR_BAD_STATE,"You must call libtrace_start() before trace_read_packet()\n");
 		return -1;
@@ -1013,7 +1016,8 @@ DLLEXPORT int trace_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 
 	/*assert(packet);*/
         if (!packet) {
-                return TRACE_ERR_NULL_PACKET;
+		trace_set_err(libtrace, TRACE_ERR_NULL_PACKET, "Packet passed into trace_read_packet() is NULL");
+                return -1;
         }
 
 	if (!(packet->buf_control==TRACE_CTRL_PACKET
@@ -1102,18 +1106,21 @@ DLLEXPORT int trace_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 int trace_prepare_packet(libtrace_t *trace, libtrace_packet_t *packet,
 		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) {
 
-	/*assert(packet);*/
-	if (!packet) {
-		return TRACE_ERR_NULL_PACKET;
-	}
 	/*assert(trace);*/
 	if (!trace) {
 		return TRACE_ERR_NULL_TRACE;
 	}
 
-	/* XXX Proper error handling?? */
-	if (buffer == NULL)
+	/*assert(packet);*/
+	if (!packet) {
+		trace_set_err(trace, TRACE_ERR_NULL_TRACE, "Packet passed into trace_prepare_packet() is NULL");
 		return -1;
+	}
+
+	if (!buffer) {
+		trace_set_err(trace, TRACE_ERR_NULL_BUFFER, "Buffer passed into trace_prepare_packet() is NULL");
+		return -1;
+	}
 
 	if (!(packet->buf_control==TRACE_CTRL_PACKET || packet->buf_control==TRACE_CTRL_EXTERNAL)) {
 		trace_set_err(trace,TRACE_ERR_BAD_STATE,"Packet passed to trace_read_packet() is invalid\n");
@@ -1149,7 +1156,8 @@ DLLEXPORT int trace_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *pa
 	}
 	/*assert(packet);*/
 	if (!packet) {
-		return TRACE_ERR_NULL_PACKET;
+		trace_set_err_out(libtrace, TRACE_ERR_NULL_PACKET, "Packet passed into trace_write_packet() is NULL");
+		return -1;
 	}
 	/* Verify the packet is valid */
 	if (!libtrace->started) {
@@ -1622,13 +1630,17 @@ static int trace_bpf_compile(libtrace_filter_t *filter,
 	 * multi threaded running should be safe.
 	 */
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	if (!packet) {
+		return TRACE_ERR_NULL_PACKET;
+	}
+
 	/*assert(filter);*/
 	if (!filter) {
 		trace_set_err(packet->trace,
 				TRACE_ERR_NULL_FILTER, "Filter is NULL trace_bpf_compile()");
 		return -1;
 	}
-
 
 	/* If this isn't a real packet, then fail */
 	if (!linkptr) {
@@ -1651,18 +1663,11 @@ static int trace_bpf_compile(libtrace_filter_t *filter,
 			return -1;
 		}
 		/*assert (pthread_mutex_lock(&mutex) == 0);*/
-		if (!(pthread_mutex_lock(&mutex) == 0)) {
-			trace_set_err(packet->trace, TRACE_ERR_MUTEX,
-					"Unable to lock mutex trace_bpf_compile()");
-			return -1;
-		}
+		pthread_mutex_lock(&mutex);
 		/* Make sure not one bet us to this */
 		if (filter->flag) {
 			/*assert (pthread_mutex_unlock(&mutex) == 0);*/
-			if (!(pthread_mutex_unlock(&mutex) == 0)) {
-				trace_set_err(packet->trace, TRACE_ERR_MUTEX,
-						"Unable to unlock mutex trace_bpf_compile()");
-			}
+			pthread_mutex_unlock(&mutex);
 			return -1;
 		}
 		pcap=(pcap_t *)pcap_open_dead(
@@ -1683,20 +1688,13 @@ static int trace_bpf_compile(libtrace_filter_t *filter,
 					pcap_geterr(pcap));
 			pcap_close(pcap);
 			/*assert (pthread_mutex_unlock(&mutex) == 0);*/
-			if (!(pthread_mutex_unlock(&mutex) == 0)) {
-				trace_set_err(packet->trace, TRACE_ERR_MUTEX,
-					"Unable to unlock mutex trace_bpf_compile()");
-			}
+			pthread_mutex_unlock(&mutex);
 			return -1;
 		}
 		pcap_close(pcap);
 		filter->flag=1;
 		/*assert (pthread_mutex_unlock(&mutex) == 0);*/
-		if (!(pthread_mutex_unlock(&mutex) == 0)) {
-			trace_set_err(packet->trace, TRACE_ERR_MUTEX,
-				"Unable to unlock mutex trace_bpf_compile()");
-			return -1;
-		}
+		pthread_mutex_unlock(&mutex);
 	}
 	return 0;
 #else
@@ -1722,9 +1720,7 @@ DLLEXPORT int trace_apply_filter(libtrace_filter_t *filter,
 
 	/*assert(packet);*/
 	if (!packet) {
-		/* Cannot set error in trace without access to it via the
-		 * packet so just return -1 */
-		return -1;
+		return TRACE_ERR_NULL_PACKET;
 	}
 	/*assert(filter);*/
 	if (!filter) {
@@ -1997,8 +1993,10 @@ DLLEXPORT int8_t trace_get_server_port(UNUSED uint8_t protocol,
  * original size is returned and the packet is left unchanged.
  */
 DLLEXPORT size_t trace_set_capture_length(libtrace_packet_t *packet, size_t size) {
-	/* not sure what to return here is packet is null will come back to it */
-	assert(packet);
+	/*assert(packet);*/
+	if (!packet) {
+		return ~0U;
+	}
 
 	if (packet->trace->format->set_capture_length) {
 		packet->capture_length = packet->trace->format->set_capture_length(packet,size);
@@ -2527,8 +2525,11 @@ void trace_add_statistics(const libtrace_stat_t *a, const libtrace_stat_t *b,
 }
 
 int trace_print_statistics(const libtrace_stat_t *s, FILE *f, const char *format) {
-	assert(s->magic == LIBTRACE_STAT_MAGIC && "Please use"
-	       "trace_create_statistics() to allocate statistics");
+	/*assert(s->magic == LIBTRACE_STAT_MAGIC && "Please use"
+	       "trace_create_statistics() to allocate statistics");*/
+	if (!(s->magic == LIBTRACE_STAT_MAGIC)) {
+		return TRACE_ERR_STAT;
+	}
 	if (format == NULL)
 		format = "%s: %"PRIu64"\n";
 #define xstr(s) str(s)

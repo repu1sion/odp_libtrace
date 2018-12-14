@@ -398,9 +398,10 @@ enum base_format_t {
 	TRACE_FORMAT_PARQ         =19,
 	TRACE_FORMAT_KAFKA        =20,
 	TRACE_FORMAT_ACCE         =21,
-        TRACE_FORMAT_PCAPNG       =22,    /**< PCAP-NG trace file */
-        TRACE_FORMAT_NDAG         =23,    /**< DAG multicast over a network */
-	TRACE_FORMAT_DPDK_NDAG    =24,    /**< DAG multicast over a network, received via DPDK */
+	TRACE_FORMAT_SPDK         =22,
+        TRACE_FORMAT_PCAPNG       =23,    /**< PCAP-NG trace file */
+        TRACE_FORMAT_NDAG         =24,    /**< DAG multicast over a network */
+	TRACE_FORMAT_DPDK_NDAG    =25,    /**< DAG multicast over a network, received via DPDK */
 };
 
 /** RT protocol packet types */
@@ -459,6 +460,7 @@ typedef enum {
 	TRACE_RT_DATA_ODP=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_ODP,
 	TRACE_RT_DATA_KAFKA=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_KAFKA,
 	TRACE_RT_DATA_ACCE=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_ACCE,
+	TRACE_RT_DATA_SPDK=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_SPDK,
 
 	/** As PCAP does not store the linktype with the packet, we need to 
 	 * create a separate RT type for each supported DLT, starting from

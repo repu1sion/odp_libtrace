@@ -1257,6 +1257,7 @@ void dpdkndag_constructor(void);
 /** Constructor for the ODP format module */
 void odp_constructor(void);
 void kafka_constructor(void);
+void spdk_constructor(void);
 void parq_constructor(void);
 void acce_constructor(void);
 

@@ -387,6 +387,368 @@ static int spdk_start_input(libtrace_t *libtrace)
         }
 }
 
+/* Pauses an input trace - this function should close or detach the file or 
+   device that is being read from. 
+   @return 0 if successful, -1 in the event of error
+*/
+static int spdk_pause_input(libtrace_t * libtrace) 
+{
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	debug("fake function. instead of pausing input - do nothing \n");
+
+	return 0;
+}
+
+//Initialises an output trace using the capture format.
+static int spdk_init_output(libtrace_out_t *libtrace) 
+{
+	int rv = 0;
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	return rv;
+}
+
+static int spdk_config_output(libtrace_out_t *libtrace, trace_option_output_t option, void *data)
+{
+	int rv = 0;
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	return rv;
+}
+
+static int spdk_start_output(libtrace_out_t *libtrace) 
+{
+	int rv = 0;
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	return rv;
+}
+
+static int spdk_fin_input(libtrace_out_t *libtrace) 
+{
+	int rv = 0;
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	return rv;
+}
+
+static int spdk_fin_output(libtrace_out_t *libtrace) 
+{
+	int rv = 0;
+	(void)libtrace;
+
+	debug("%s() \n", __func__);
+
+	return rv;
+}
+
+/* Reads the next packet from an input trace into the provided packet 
+ * structure.
+ *
+ * @param libtrace      The input trace to read from
+ * @param packet        The libtrace packet to read into
+ * @return The size of the packet read (in bytes) including the capture
+ * framing header, or -1 if an error occurs. 0 is returned in the
+ * event of an EOF. 
+ *
+ * If no packets are available for reading, this function should block
+ * until one appears or return 0 if the end of a trace file has been
+ * reached.
+ */
+
+//So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
+static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
+{
+	uint32_t flags = 0;
+	int numbytes = 0;
+	
+	debug("%s() \n", __func__);
+
+	return numbytes;
+}
+
+/*
+Converts a buffer containing a packet record into a libtrace packet
+should be called in odp_read_packet()
+Updates internal trace and packet details, such as payload pointers,
+loss counters and packet types to match the packet record provided
+in the buffer. This is a zero-copy function.
+*/
+
+
+static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *packet,
+		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
+{
+	debug("%s() \n", __func__);
+
+	//in theory we don't have packets allocated with TRACE_CTRL_PACKET
+	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
+                free(packet->buffer);
+
+        if ((flags & TRACE_PREP_OWN_BUFFER) == TRACE_PREP_OWN_BUFFER) {
+                packet->buf_control = TRACE_CTRL_PACKET;
+        } else
+                packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
+
+/*	void *header;			**< Pointer to the framing header *
+ *	void *payload;			**< Pointer to the link layer *
+ *	void *buffer;			**< Allocated buffer */
+        packet->buffer = buffer;
+        packet->header = buffer;
+
+/*	MOVED THIS PART to lodp_read_packet()
+	-----
+	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
+	packet->capture_length = FORMAT(libtrace)->pkt_len;
+	packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+	-----
+*/
+	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
+	packet->type = rt_type;
+
+#if 0
+	if (libtrace->format_data == NULL) {
+		if (odp_init_input(libtrace))
+			return -1;
+	}
+#endif
+
+	return 0;
+}
+
+static void spdk_fin_packet(libtrace_packet_t *packet)
+{
+	debug("%s() \n", __func__);
+
+	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
+	{
+		free(packet->buffer);
+		packet->buffer = NULL;
+	}
+}
+
+static int spdk_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
+{
+	int numbytes = 0;
+	//rd_kafka_resp_err_t err;
+
+	debug("%s() \n", __func__);
+
+	return numbytes;
+}
+
+//Returns the payload length of the captured packet record
+//We use the value we got from odp and stored in FORMAT(libtrace)->pkt_len
+static int lodp_get_capture_length(const libtrace_packet_t *packet)
+{
+	int pkt_len;
+
+	debug("lodp_get_capture_length() called! \n");
+
+	if (packet)
+	{
+		// this won't work probably, as we don't set packet->length anywhere, so can't return it.
+		//pkt_len = (int)trace_get_capture_length(packet);
+		//pkt_len = FORMAT(libtrace)->pkt_len;
+		pkt_len = packet->capture_length;
+		debug("packet: %p , length: %d\n", packet, pkt_len);
+		return pkt_len;
+	}
+	else
+	{
+		debug("NO packet. \n");
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
+	}
+}
+
+static int lodp_get_framing_length(const libtrace_packet_t *packet) 
+{
+	debug("lodp_get_framing_length() called! \n");
+
+	if (packet)
+		//return trace_get_framing_length(packet);
+		return 0; //XXX - TODO, fix it, this is just for test
+	else
+	{
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
+	}
+}
+
+//Returns the original length of the packet as it was on the wire
+static int lodp_get_wire_length(const libtrace_packet_t *packet) 
+{
+	debug("lodp_get_wire_length() called! \n");
+
+	if (packet)
+		//return trace_get_wire_length(packet);
+		return packet->wire_length;
+	else
+	{
+		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
+		return -1;
+	}
+}
+
+static libtrace_linktype_t lodp_get_link_type(const libtrace_packet_t *packet UNUSED) 
+{
+	debug("%s() \n", __func__);
+
+	return TRACE_TYPE_ETH;	//We have Ethernet for ODP and in DPDK.
+}
+
+//returns timestamp from a packet or time now (as hack)
+static double lodp_get_seconds(const libtrace_packet_t *packet)
+{
+	double seconds = 0.0f;
+	time_t t;
+	const void *p;
+
+	//avoid warning about unused packet var
+	p = packet;
+	(void)p;
+
+	time(&t);
+
+	seconds = (double)t;
+	debug("packet framing header is : %p, time : %.0f \n",
+		packet->header, seconds);
+
+	return seconds;
+}
+
+//sequence of calling time functions from trace_get_erf_timestamp():
+//1)erf 2)timespec 3)timewal 4)seconds
+static struct timeval lodp_get_timeval(const libtrace_packet_t *packet)
+{
+	struct timeval tv;
+	const void *p;
+
+	//avoid warning about unused packet var
+	p = packet;
+	(void)p;
+
+	gettimeofday(&tv, NULL);
+/*
+	debug("packet header: %p, seconds: %zu , microseconds: %zu \n",
+		packet->header, tv.tv_sec, tv.tv_usec);
+*/
+
+	return tv;
+}
+
+static void spdk_help(void)
+{
+	printf("Endace SPDK format module\n");
+	printf("Supported input uris:\n");
+	printf("\todp:/path/to/input/file\n");
+	printf("Supported output uris:\n");
+	printf("\todp:/path/to/output/file\n");
+	printf("\n");
+	return;
+}
+
+
+static int spdk_pstart_input(libtrace_t *libtrace)
+{
+	int ret = 0;
+
+
+
+	return ret;
+}
+
+/**
+ * Read a batch of packets from the input stream related to thread.
+ * At most read nb_packets, however should return with less if packets
+ * are not waiting. However still must return at least 1, 0 still indicates
+ * EOF.
+ *
+ * @param libtrace	The input trace
+ * @param t	The thread
+ * @param packets	An array of packets
+ * @param nb_packets	The number of packets in the array (the maximum to read)
+ * @return The number of packets read, or 0 in the case of EOF or -1 in error or -2 to represent
+ * interrupted due to message waiting before packets had been read.
+ */
+//we mostly read 10 packets in loop and then exit, this is how actually function works
+static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
+{
+	int pkts_read = 0;
+	int numbytes = 0;
+	uint32_t flags = 0;
+	unsigned int i;
+
+	debug("%s() \n", __func__);
+
+
+
+
+
+	debug("%s() exit with pkts_read : %d \n", __func__, pkts_read);
+
+	return pkts_read;
+}
+
+//libtrace creates threads with pthread_create(), then fills libtrace_thread_t struct and passes ptr to it here (*t)
+static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, bool reader)
+{
+	int rv = 0;
+
+	libtrace=libtrace;
+
+	debug("%s() \n", __func__);
+
+	if (reader)
+	{
+		debug("trying to register a reader thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
+			t, t->type, t->tid, t->perpkt_num);
+
+		//Bind thread and its per_thread struct
+		if(t->type == THREAD_PERPKT) 
+		{
+			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream, t->perpkt_num)->data;
+			if (t->format_data == NULL) 
+			{
+				trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
+				              "Too many threads registered");
+				return -1;
+			}
+		}
+	}
+	else
+	{
+		debug("trying to register not reading thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
+			t, t->type, t->tid, t->perpkt_num);
+	}
+
+	return rv;	
+}
+
+static void lodp_punregister_thread(libtrace_t *libtrace, libtrace_thread_t *t)
+{
+	libtrace = libtrace;
+	t = t;
+
+	debug("%s() \n", __func__);
+
+	debug("unregistering thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
+		t, t->type, t->tid, t->perpkt_num);
+
+	return;
+}
 
 /* A libtrace capture format module */
 /* All functions should return -1, or NULL on failure */
@@ -403,7 +765,7 @@ static struct libtrace_format_t spdk = {
         spdk_init_output,               /* init_output - Initialises an output trace using the capture format. */
         spdk_config_output,             /* config_output */
         spdk_start_output,              /* start_output */
-        spdk_fin_input,	         /* fin_input - Stops capture input data.*/
+        spdk_fin_input,	         	/* fin_input - Stops capture input data.*/
         spdk_fin_output,                /* fin_output */
         spdk_read_packet,        	 /* read_packet - Reads next packet from input trace into the packet structure */
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
@@ -430,7 +792,7 @@ static struct libtrace_format_t spdk = {
 	NULL,				/* get_statistics */
         NULL,                           /* get_fd */
         NULL,              		/* trace_event */
-        lodp_help,                     	/* help */
+        spdk_help,                     	/* help */
         NULL,                           /* next pointer */
 	{true, 8},                      /* Live, NICs typically have 8 threads */
 	spdk_pstart_input,              /* pstart_input */

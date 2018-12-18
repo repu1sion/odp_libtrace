@@ -878,9 +878,10 @@ void trace_fin_packet(libtrace_packet_t *packet) {
 			packet->trace->format->fin_packet(packet);
 		}
 
+#if 0
                 if (packet->srcbucket && packet->internalid != 0) {
                         libtrace_bucket_t *b = (libtrace_bucket_t *)packet->srcbucket;
-                        libtrace_release_bucket_id(b, packet->internalid);
+                        //libtrace_release_bucket_id(b, packet->internalid);
                 }
 
                 if (packet->trace) {
@@ -902,6 +903,7 @@ void trace_fin_packet(libtrace_packet_t *packet) {
 		packet->hash = 0;
 		packet->order = 0;
                 packet->srcbucket = NULL;
+#endif
 	}
 }
 

@@ -62,21 +62,26 @@ static void read(libtrace_t *trace, libtrace_combine_t *c){
 		while (libtrace_deque_get_size(v) != 0) {
 			libtrace_result_t r;
                         libtrace_generic_t gt = {.res = &r};
-			ASSERT_RET (libtrace_deque_pop_front(v, (void *) &r), == 1);
-                        /* Ignore any ticks that we've already seen */
-                        if (r.type == RESULT_TICK_INTERVAL) {
-                                if (r.key <= c->last_ts_tick)
-                                        continue;
-                                c->last_ts_tick = r.key;
-                        }
+			//repu1sion hack
+			//ASSERT_RET (libtrace_deque_pop_front(v, (void *) &r), == 1);
+			if (libtrace_deque_pop_front(v, (void *) &r) == 1)
+			{
+				/* Ignore any ticks that we've already seen */
+				if (r.type == RESULT_TICK_INTERVAL) {
+					if (r.key <= c->last_ts_tick)
+						continue;
+					c->last_ts_tick = r.key;
+				}
 
-                        if (r.type == RESULT_TICK_COUNT) {
-                                if (r.key <= c->last_count_tick)
-                                        continue;
-                                c->last_count_tick = r.key;
-                        }
-			send_message(trace, &trace->reporter_thread,
-                                MESSAGE_RESULT, gt, NULL);
+				if (r.type == RESULT_TICK_COUNT) {
+					if (r.key <= c->last_count_tick)
+						continue;
+					c->last_count_tick = r.key;
+				}
+
+				send_message(trace, &trace->reporter_thread,
+					MESSAGE_RESULT, gt, NULL);
+			}
 		}
 	}
 }

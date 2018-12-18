@@ -229,10 +229,12 @@ inline void send_message(libtrace_t *trace, libtrace_thread_t *thread,
                                         thread->user_data, type, data, sender);
 		return;
 	case MESSAGE_RESULT:
+
                 if (cbs->message_result)
                         (*cbs->message_result)(trace, thread,
                                         trace->global_blob, thread->user_data,
                                         data.res);
+
                 return;
 
 	/* These should be unused */
@@ -689,9 +691,9 @@ static void* perpkt_threads_entry(void *data) {
 			}
 			if (!trace->pread) {
 				assert(packets[0]);
-				ASSERT_RET(pthread_mutex_lock(&trace->libtrace_lock), == 0);
+				//ASSERT_RET(pthread_mutex_lock(&trace->libtrace_lock), == 0);
 				nb_packets = trace_read_packet(trace, packets[0]);
-				ASSERT_RET(pthread_mutex_unlock(&trace->libtrace_lock), == 0);
+				//ASSERT_RET(pthread_mutex_unlock(&trace->libtrace_lock), == 0);
 				packets[0]->error = nb_packets;
 				if (nb_packets > 0)
 					nb_packets = 1;
@@ -876,13 +878,13 @@ hasher_eof:
 			libtrace_ocache_alloc(&trace->packet_freelist, (void **) &bcast, 1, 1);
 			bcast->error = packet->error;
 		}
-		ASSERT_RET(pthread_mutex_lock(&trace->libtrace_lock), == 0);
+		//ASSERT_RET(pthread_mutex_lock(&trace->libtrace_lock), == 0);
 		if (trace->perpkt_threads[i].state != THREAD_FINISHED) {
 			libtrace_ringbuffer_write(&trace->perpkt_threads[i].rbuffer, bcast);
 		} else {
 			libtrace_ocache_free(&trace->packet_freelist, (void **) &bcast, 1, 1);
 		}
-		ASSERT_RET(pthread_mutex_unlock(&trace->libtrace_lock), == 0);
+		//ASSERT_RET(pthread_mutex_unlock(&trace->libtrace_lock), == 0);
 	}
 
 	// We don't need to free the packet
@@ -1137,6 +1139,7 @@ static void* reporter_entry(void *data) {
 	send_message(trace, t, MESSAGE_STARTING, (libtrace_generic_t){0}, t);
 	send_message(trace, t, MESSAGE_RESUMING, (libtrace_generic_t){0}, t);
 
+#if 1
 	while (!trace_has_finished(trace)) {
 		if (trace->config.reporter_polling) {
 			if (libtrace_message_queue_try_get(&t->messages, &message) == LIBTRACE_MQ_FAILED)
@@ -1163,6 +1166,13 @@ static void* reporter_entry(void *data) {
                                         message.sender);
 		}
 	}
+#else
+	//repu1sion
+	while(1)
+	{
+		usleep(1000);
+	}
+#endif
 
 	// Flush out whats left now all our threads have finished
 	trace->combiner.read_final(trace, &trace->combiner);
@@ -2597,7 +2607,7 @@ DLLEXPORT void trace_free_packet(libtrace_t *libtrace, libtrace_packet_t *packet
 	assert(packet);
 	/* Always release any resources this might be holding */
 	trace_fin_packet(packet);
-	libtrace_ocache_free(&libtrace->packet_freelist, (void **) &packet, 1, 1);
+	//libtrace_ocache_free(&libtrace->packet_freelist, (void **) &packet, 1, 1);
 }
 
 DLLEXPORT libtrace_info_t *trace_get_information(libtrace_t * libtrace) {

@@ -13,6 +13,20 @@
 #include "format_helper.h"
 #include "wandio.h"
 #include "rt_protocol.h"
+//spdk
+#include "spdk/stdinc.h"
+#include "spdk/bdev.h"
+#include "spdk/copy_engine.h"
+#include "spdk/conf.h"
+#include "spdk/env.h"
+#include "spdk/io_channel.h"
+#include "spdk/log.h"
+#include "spdk/string.h"
+#include "spdk/queue.h"
+#include "spdk/nvme.h"
+
+#include "../lib/bdev/raid/bdev_raid.h"
+#include "../lib/bdev/nvme/bdev_nvme.h"
 
 #define ERR_SIZE 512
 #define DEVNAME_SIZE 32
@@ -32,33 +46,6 @@
 #else
  #define debug(x...)
 #endif
-
-//global data
-typedef struct spdk_format_data_s
-{
-	char *pci_nvme_addr[NUM_RAID_DEVICES];
-	char devname[NUM_RAID_DEVICES][DEVNAME_SIZE];
-	const char *names[NVME_MAX_BDEVS_PER_RPC];
-	pls_thread_t *t;
-	int num_threads;		//keep number of threads passed from utility command line
-	void *pkt;			//store received packet here
-	int pkt_len;			//length of current packet
-	int pvt;			//for private data saving
-	unsigned int pkts_read;
-	u_char *l2h;			//l2 header for current packet
-	libtrace_list_t *per_stream;	//pointer to the whole list structure: head, tail, size etc inside.
-} spdk_format_data_t;
-
-//per thread
-typedef struct spdk_per_stream_s 
-{
-	int id;
-	int core;
-	void *pkt;
-	int pkt_len;
-	u_char *l2h;
-	unsigned int pkts_read;
-} spdk_per_stream_t;
 
 //------------------ spdk structs ----------------------------------------------
 /* Used to pass messages between fio threads */
@@ -97,6 +84,41 @@ typedef struct pls_thread_s
         pls_target_t pls_target;
         TAILQ_HEAD(, pls_poller) pollers; /* List of registered pollers on this thread */
 } pls_thread_t;
+
+//------------------ libtrace structs ------------------------------------------
+//global data
+typedef struct spdk_format_data_s
+{
+	char *pci_nvme_addr[NUM_RAID_DEVICES];
+	char devname[NUM_RAID_DEVICES][DEVNAME_SIZE];
+	const char *names[NVME_MAX_BDEVS_PER_RPC];
+	uint32_t block_size;
+        uint64_t num_blocks;
+	uint64_t bytes;
+	uint64_t max_offset;
+	pls_thread_t *t;
+	int num_threads;		//keep number of threads passed from utility command line
+	void *pkt;			//store received packet here
+	int pkt_len;			//length of current packet
+	int pvt;			//for private data saving
+	unsigned int pkts_read;
+	u_char *l2h;			//l2 header for current packet
+	libtrace_list_t *per_stream;	//pointer to the whole list structure: head, tail, size etc inside.
+} spdk_format_data_t;
+
+//per thread
+typedef struct spdk_per_stream_s 
+{
+	int id;
+	int core;
+	void *pkt;
+	int pkt_len;
+	u_char *l2h;
+	unsigned int pkts_read;
+} spdk_per_stream_t;
+
+
+pls_thread_t pls_ctrl_thread;
 
 //------------------ spdk functions --------------------------------------------
 static size_t pls_poll_thread(pls_thread_t *thread)
@@ -183,6 +205,13 @@ static void pls_stop_poller(struct spdk_poller *poller, void *thread_ctx)
         free(lpoller);
 }
 
+static void pls_bdev_init_done(void *cb_arg, int rc)
+{
+        printf("bdev init is done\n");
+        *(bool *)cb_arg = true;
+	(void)rc;
+}
+
 //spdk init, which could be used for both: spdk_init_input() and spdk_init_output()
 static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *err, int errlen)
 {
@@ -193,6 +222,10 @@ static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *er
         struct spdk_env_opts opts;
         struct spdk_nvme_transport_id trid[NUM_RAID_DEVICES] = {{0}};
         size_t count = NVME_MAX_BDEVS_PER_RPC;
+
+	(void)uridata;
+	(void)err;
+	(void)errlen;
 
         printf("%s() called \n", __func__);
 
@@ -319,18 +352,26 @@ static int spdk_init_input(libtrace_t *libtrace)
 
 static int spdk_start_input(libtrace_t *libtrace) 
 {
+	int rv = 0;
+	spdk_format_data_t *fd = FORMAT(libtrace);
+	if (!fd)
+	{
+                printf("failed to get format data ptr\n");
+                rv = -1; return rv;
+	}
+
 	pls_thread_t *t = FORMAT(libtrace)->t;
 	if (!t)
 	{
                 printf("failed to get thread ptr\n");
-                rv = -1; return NULL;
+                rv = -1; return rv;
 	}
 
         t->ring = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 4096, SPDK_ENV_SOCKET_ID_ANY);
         if (!t->ring)
         {
                 printf("failed to allocate ring\n");
-                rv = -1; return NULL;
+                rv = -1; return rv;
         }
 
         t->thread = spdk_allocate_thread(pls_send_msg, pls_start_poller,
@@ -339,7 +380,7 @@ static int spdk_start_input(libtrace_t *libtrace)
         {
                 spdk_ring_free(t->ring);
                 SPDK_ERRLOG("failed to allocate thread\n");
-                return NULL;
+                rv = -1; return rv;
         }
 
         TAILQ_INIT(&t->pollers);
@@ -349,14 +390,14 @@ static int spdk_start_input(libtrace_t *libtrace)
         if (!raid_cfg)
         {
                 printf("<failed to get raid config>\n");
-                rv = 1; return NULL;
+                rv = 1; return rv;
         }
 
         t->pls_target.bd = &raid_cfg->raid_bdev->bdev;
         if (!t->pls_target.bd)
         {
                 printf("<failed to get raid device from config>\n");
-                rv = 1; return NULL;
+                rv = 1; return rv;
         }
         else
                 printf("got raid device with name [%s]\n", t->pls_target.bd->name);
@@ -365,15 +406,14 @@ static int spdk_start_input(libtrace_t *libtrace)
         if (rv)
         {
                 printf("failed to open device\n");
-                return NULL;
+                return rv;
         }
 
-        fd->block_size = spdk_bdev_get_block_size(bd);
-        fd->num_blocks = spdk_bdev_get_num_blocks(bd);
-        fd->bytes = global.block_size * global.num_blocks;
-        fd->kb = global.bytes / 1024;
-        printf("device block size is: %u bytes, num blocks: %lu, bytes: %lu, kb: %lu\n",
-                fd->block_size, fd->num_blocks, fd->bytes, fd->kb);
+        fd->block_size = spdk_bdev_get_block_size(t->pls_target.bd);
+        fd->num_blocks = spdk_bdev_get_num_blocks(t->pls_target.bd);
+        fd->bytes = fd->block_size * fd->num_blocks;
+        printf("device block size is: %u bytes, num blocks: %lu, bytes: %lu \n",
+                fd->block_size, fd->num_blocks, fd->bytes);
         fd->max_offset = fd->block_size * fd->num_blocks - 1;
         printf("max offset(bytes): 0x%lx\n", fd->max_offset);
 
@@ -383,8 +423,10 @@ static int spdk_start_input(libtrace_t *libtrace)
         {
                 printf("Unable to get I/O channel for bdev.\n");
                 spdk_bdev_close(t->pls_target.desc);
-                rv = -1; return NULL;
+                rv = -1; return rv;
         }
+
+	return rv;
 }
 
 /* Pauses an input trace - this function should close or detach the file or 
@@ -417,6 +459,8 @@ static int spdk_config_output(libtrace_out_t *libtrace, trace_option_output_t op
 {
 	int rv = 0;
 	(void)libtrace;
+	(void)option;
+	(void)data;
 
 	debug("%s() \n", __func__);
 
@@ -433,7 +477,7 @@ static int spdk_start_output(libtrace_out_t *libtrace)
 	return rv;
 }
 
-static int spdk_fin_input(libtrace_out_t *libtrace) 
+static int spdk_fin_input(libtrace_t *libtrace) 
 {
 	int rv = 0;
 	(void)libtrace;
@@ -470,8 +514,10 @@ static int spdk_fin_output(libtrace_out_t *libtrace)
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
 static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
-	uint32_t flags = 0;
+	//uint32_t flags = 0;
 	int numbytes = 0;
+	(void)libtrace;
+	(void)packet;
 	
 	debug("%s() \n", __func__);
 
@@ -541,7 +587,8 @@ static void spdk_fin_packet(libtrace_packet_t *packet)
 static int spdk_write_packet(libtrace_out_t *libtrace, libtrace_packet_t *packet)
 {
 	int numbytes = 0;
-	//rd_kafka_resp_err_t err;
+	(void)libtrace;
+	(void)packet;
 
 	debug("%s() \n", __func__);
 
@@ -664,7 +711,7 @@ static void spdk_help(void)
 static int spdk_pstart_input(libtrace_t *libtrace)
 {
 	int ret = 0;
-
+	(void)libtrace;
 
 
 	return ret;
@@ -684,12 +731,19 @@ static int spdk_pstart_input(libtrace_t *libtrace)
  * interrupted due to message waiting before packets had been read.
  */
 //we mostly read 10 packets in loop and then exit, this is how actually function works
-static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_packet_t **packets, size_t nb_packets)
+static int spdk_pread_packets(libtrace_t *trace, libtrace_thread_t *t, 
+			      libtrace_packet_t **packets, size_t nb_packets)
 {
 	int pkts_read = 0;
+/*
 	int numbytes = 0;
 	uint32_t flags = 0;
 	unsigned int i;
+*/
+	(void)trace;
+	(void)t;
+	(void)packets;
+	(void)nb_packets;
 
 	debug("%s() \n", __func__);
 
@@ -702,7 +756,8 @@ static int kafka_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace
 	return pkts_read;
 }
 
-//libtrace creates threads with pthread_create(), then fills libtrace_thread_t struct and passes ptr to it here (*t)
+/* libtrace creates threads with pthread_create(), then fills
+  libtrace_thread_t struct and passes ptr to it here (*t) */
 static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, bool reader)
 {
 	int rv = 0;

@@ -22,6 +22,7 @@ HEADER1="include"
 HEADER2="platform/linux-dpdk/include"
 HEADER3="platform/linux-dpdk/arch/x86"
 
+SPDK_PATH="/root/spdkp/include"
 ODP_PATH=""
 SEARCH_PATH="/"
 NUMCORES=$(nproc)
@@ -58,8 +59,7 @@ fi
 
 # configuring
 ./bootstrap.sh
-
-./configure CFLAGS="-g -shared-libgcc -I${ODP_PATH}/${HEADER1} -I${ODP_PATH}/${HEADER2} -I${ODP_PATH}/${HEADER3}"
+./configure CFLAGS="-g -shared-libgcc -I${ODP_PATH}/${HEADER1} -I${ODP_PATH}/${HEADER2} -I${ODP_PATH}/${HEADER3} -I${SPDK_PATH}"
 
 #if [ $NUMCORES -le 2 ]; then
 #	echo -e "${WHITE}configuring for laptop ${NC}"

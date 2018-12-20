@@ -1232,9 +1232,9 @@ static int kafka_write_packet(libtrace_out_t *libtrace,
 	if (rd_kafka_produce(OUTPUT->rkt, OUTPUT->partition, RD_KAFKA_MSG_F_COPY,
 		 packet->payload, len, NULL, 0, NULL) == -1)
 	{
-		fprintf(stderr, "%% Failed to produce to topic %s partition %i. err num: %d, err: %s \n",
-			rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition, rd_kafka_errno2err(errno),
-			rd_kafka_err2str(rd_kafka_errno2err(errno)));
+		fprintf(stderr, "%% Failed to produce to topic %s partition %i. err: %s \n",
+			rd_kafka_topic_name(OUTPUT->rkt), OUTPUT->partition, 
+					    rd_kafka_err2name(rd_kafka_last_error()));
 		
 		/* Poll to handle delivery reports */
 		rd_kafka_poll(OUTPUT->rk, 0);

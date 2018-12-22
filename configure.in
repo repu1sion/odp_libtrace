@@ -100,7 +100,7 @@ AC_SYS_LARGEFILE
 
 LIBPKTDUMP_LIBS="-ltrace "
 ADD_LDFLAGS="$ADD_LDFLAGS -L\$(abs_top_srcdir)/lib"
-LIBTRACE_LIBS="-lodp-linux -lrdkafka -lxio"
+LIBTRACE_LIBS="-lodp-linux -lrdkafka -lxio -lspdk"
 TOOLS_LIBS=""
 
 CFLAGS="$CFLAGS -Wall -Wmissing-prototypes -Wextra -DLT_BUILDING_DLL=1"

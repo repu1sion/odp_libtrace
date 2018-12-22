@@ -386,7 +386,8 @@ static int spdk_start_input(libtrace_t *libtrace)
         TAILQ_INIT(&t->pollers);
 
         struct raid_bdev_config *raid_cfg = NULL;
-        raid_cfg = raid_bdev_config_find_by_name(RAID_DEVICE);
+        //raid_cfg = raid_bdev_config_find_by_name(RAID_DEVICE);
+        raid_cfg = spdk_construct_raid_cfg(RAID_DEVICE);
         if (!raid_cfg)
         {
                 printf("<failed to get raid config>\n");

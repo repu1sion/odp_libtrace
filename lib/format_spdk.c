@@ -40,6 +40,10 @@
 #define DEVICE_NAME "s4msung"
 #define DEVICE_NAME_NQN "s4msungnqn"
 
+//options
+#define DEBUG
+//#define HL_DEBUGS		//high level debugs - on writing buffers and counting callbacks
+
 #define FORMAT(x) ((spdk_format_data_t *)x->format_data)
 #ifdef DEBUG
  #define debug(x...) printf(x)
@@ -117,8 +121,96 @@ typedef struct spdk_per_stream_s
 	unsigned int pkts_read;
 } spdk_per_stream_t;
 
+typedef struct pckt_s
+{
+        void *ptr;
+        int len;
+	//XXX - timestamp for packet?
+        struct pckt_s *next;
+} pckt_t;
 
 pls_thread_t pls_ctrl_thread;
+
+//queue implementation----------------------------------------------------------
+//input queue (on server)
+pckt_t *queue_head = NULL;
+pckt_t *queue_tail = NULL;
+int queue_num = 0;
+int pshared;
+pthread_spinlock_t queue_lock;
+
+static int queue_add(pckt_t *pkt)
+{
+	if (!pkt)
+	{
+		error("trying to add to queue NULL pkt!\n");
+		return -1;
+	}
+
+	pthread_spin_lock(&queue_lock);
+        if (!queue_head)
+        {
+                queue_head = pkt;
+                queue_tail = pkt;
+        }
+        else
+        {
+                queue_tail->next = pkt;		//we set element->next here
+                queue_tail = pkt;
+        }
+        pkt->next = NULL;
+        queue_num++;
+	pthread_spin_unlock(&queue_lock);
+
+	return queue_num;
+}
+
+static pckt_t* queue_de()
+{
+        pckt_t *deq = NULL;
+
+	//pthread_spin_trylock(&queue_lock);
+	pthread_spin_lock(&queue_lock);
+        if (queue_head)
+        {
+                deq = queue_head;
+                if (queue_head != queue_tail) //not last element
+                {
+                        queue_head = queue_head->next;
+			if (!queue_head)
+			{
+				pthread_spin_unlock(&queue_lock);
+				error("we lost head but queue is not empty: %d\n", queue_num);
+				return NULL;
+			}
+                }
+                else //last element
+                {
+                        queue_head = queue_tail = NULL;
+                }
+                queue_num--;
+		pthread_spin_unlock(&queue_lock);
+                return deq;
+        }
+        else
+	{
+		pthread_spin_unlock(&queue_lock);
+                return NULL;
+	}
+}
+
+static pckt_t* queue_create_pckt()
+{
+	pckt_t *p = malloc(sizeof (pckt_t));
+	if (!p)
+		return NULL;
+	else
+		memset(p, 0x0, sizeof (pckt_t));
+	return p;
+}
+
+
+
 
 //------------------ spdk functions --------------------------------------------
 static size_t pls_poll_thread(pls_thread_t *thread)
@@ -212,6 +304,30 @@ static void pls_bdev_init_done(void *cb_arg, int rc)
 	(void)rc;
 }
 
+static void pls_bdev_read_done_cb(struct spdk_bdev_io *bdev_io, bool success, void *cb_arg)
+{
+        static unsigned int cnt = 0;
+        pls_thread_t *t = (pls_thread_t*)cb_arg;
+
+        /*printf("bdev read is done\n");*/
+        if (success)
+        {
+                t->read_complete = true;
+                global.stat_read_bytes += BUFFER_SIZE;
+                __atomic_fetch_add(&cnt, 1, __ATOMIC_SEQ_CST);
+                debug("read completed successfully\n");
+        }
+        else
+                printf("read failed\n");
+
+#ifdef HL_DEBUGS
+        if (cnt % 1000 == 0)
+                printf("have %u successful read callabacks. thread #%d, offset: 0x%lx \n",
+                         cnt, t->idx, t->offset);
+#endif
+        spdk_bdev_free_io(bdev_io);
+}
+
 //spdk init, which could be used for both: spdk_init_input() and spdk_init_output()
 static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *err, int errlen)
 {
@@ -299,11 +415,15 @@ static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *er
                 }
         }
 
-        rv = spdk_construct_raid_bdev(RAID_DEVICE, STRIPE_SIZE, 0, NUM_RAID_DEVICES, fd->names[0], fd->names[1]);
+        rv = spdk_construct_raid_bdev(RAID_DEVICE, STRIPE_SIZE, 0, NUM_RAID_DEVICES, 
+				      fd->names[0], fd->names[1]);
         if (!rv)
                 printf("[raid created successfully]\n");
         else
                 printf("<failed to create raid>\n");
+
+	//free thread to allocate it one more time. special for libtrace
+	spdk_free_thread();
 
         return rv;
 }
@@ -319,6 +439,8 @@ static int spdk_init_input(libtrace_t *libtrace)
 
 	spdk_per_stream_t stream;
 	memset(&stream, 0x0, sizeof(spdk_per_stream_t));
+
+	pthread_spin_init(&queue_lock, pshared);
 
 	//init all the data in spdk_format_data_t
 	libtrace->format_data = malloc(sizeof(spdk_format_data_t));
@@ -350,9 +472,89 @@ static int spdk_init_input(libtrace_t *libtrace)
 	return 0;
 }
 
-static int spdk_start_input(libtrace_t *libtrace) 
+//takes buf. parses it. add packets to the queue
+void pkt_parser(void *bf)
 {
-	int rv = 0;
+	int i, j;
+	unsigned char *p = (unsigned char*)bf;
+	bool new_packet = false;
+	bool new_len = false;
+	unsigned short len = 0;
+	uint64_t ts = 0, t = 0;
+	pckt_t *pkt = NULL;
+	int num;
+
+	debug("%s() called \n", __func__);
+
+	//parsing packets in 0xEE format here
+	for (i = 0; i < BUFFER_SIZE; i++)
+	{
+		//printf("i: %d, 0x%X\n", i, p[i]);
+		if (p[i] == 0xEE)
+		{
+			new_packet = true;
+			continue;
+		}
+		if (new_packet)
+		{
+			//getting timestamp
+			ts = 0;
+			for (j = 0; j < 8; j++)
+			{
+				t = (uint64_t)p[i+j];
+				ts |= t << 8*(7-j);
+				//printf("j: %d, ts: 0x%lx \n", j, ts);
+			}
+			i += 8;
+
+			len = p[i] << 8;
+			i++;
+			len |= p[i];
+			new_packet = false;
+			if (!len) //check for packet sanity, if no len - skip
+				continue;
+			if (len > MAX_PACKET_SIZE)
+				printf("parsing 0xEE format we have big len: %d , at addr: %p\n",
+					len, p+i);
+			new_len = true; 
+			debug("new packet len: %d , ts: %lu \n", len, ts);
+			continue;
+		}
+		if (new_len)
+		{
+			pkt = queue_create_pckt();
+			if (!pkt)
+				error("failed to allocate RAM for a new packet!\n");
+			else
+			{
+				pkt->len = len;
+				pkt->ptr = malloc(len);
+				if (!pkt->ptr)
+					error("failed to allocate RAM for a new packet!\n");
+				memcpy(pkt->ptr, p+i, len);
+				i += len - 1; //we skip till next 0xEE
+				new_len = false;
+				num = queue_add(pkt);
+				if (num > 0)
+				{
+					debug("packet added to queue. now in queue: %d\n", num);
+				}
+			}
+		}
+	}
+}
+
+//we run it in separate thread to avoid blocking issues
+static void* reader_thread_f(void *arg)
+{
+	int rv;
+	libtrace_t *libtrace = (libtrace_t*)arg;
+	void *bf = NULL;
+
+        //set higher priority
+        rv = nice(-20);
+        printf("set reader thread priority to : %d \n", rv);
+
 	spdk_format_data_t *fd = FORMAT(libtrace);
 	if (!fd)
 	{
@@ -427,6 +629,58 @@ static int spdk_start_input(libtrace_t *libtrace)
                 rv = -1; return rv;
         }
 
+        while(1)
+        {
+                bf = spdk_dma_zmalloc(nbytes, 0, NULL);
+                if (!bf)
+                {
+                	printf("failed to allocate RAM for reading\n");
+			return NULL;
+		}
+		t->read_complete = false;
+
+		rv = spdk_bdev_read(t->pls_target.desc, t->pls_target.ch,
+				    bf, offset, nbytes, pls_bdev_read_done_cb, t);
+                if (rv)
+			printf("spdk_bdev_read failed\n");
+		else
+		{
+			offset += nbytes;
+			readbytes += nbytes;
+		}
+		if (offset + BUFFER_SIZE > global.max_offset)
+		{
+                	global.overwrap_read_cnt++;
+                        offset = 0;
+                        printf("read overwrap: %lu. read offset reset to 0\n", 
+				global.overwrap_read_cnt);
+                }
+
+		/*need to wait for bdev read completion first*/
+                while(t->read_complete == false)
+                {
+                        usleep(10);
+                }
+
+		/* parse buf with packets and add packets to queue */
+		pkt_parser(bf);
+
+		spdk_dma_free(bf);
+	}
+
+	return NULL;
+}
+
+static int spdk_start_input(libtrace_t *libtrace) 
+{
+	int rv = 0;
+	//XXX - check pthread_t address
+	rv = pthread_create(&FORMAT(libtrace)->t->pthread_desc, NULL, reader_thread_f, libtrace);
+	if (rv)
+		error("failed to create a thread!\n");
+	else
+		debug("thread created successfully\n");
+
 	return rv;
 }
 
@@ -498,6 +752,43 @@ static int spdk_fin_output(libtrace_out_t *libtrace)
 	return rv;
 }
 
+#if 0
+static int spdk_read_pack(libtrace_t *libtrace)
+{
+	int numbytes = 0;
+	pckt_t *pkt = NULL;
+
+	while (1) 
+	{
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
+		if (queue_num)
+		{
+			pkt = queue_de();
+			if (pkt)
+			{
+				numbytes = pkt->len;
+				debug("have packet with len %d, left in queue: %d \n", numbytes, queue_num);
+				break;
+			}
+		}
+		usleep(10000);
+
+		
+		return numbytes;
+	}
+
+	/* We'll NEVER get here */
+	return READ_ERROR;
+}
+#endif
+
+
 /* Reads the next packet from an input trace into the provided packet 
  * structure.
  *
@@ -515,12 +806,78 @@ static int spdk_fin_output(libtrace_out_t *libtrace)
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
 static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
-	//uint32_t flags = 0;
+	uint32_t flags = 0;
 	int numbytes = 0;
-	(void)libtrace;
-	(void)packet;
+	pckt_t *pkt = NULL;
 	
 	debug("%s() \n", __func__);
+
+	//#0. Free the last packet buffer
+	if (packet->buffer) 
+	{
+		//Check buffer memory is owned by the packet. It is if flag is TRACE_CTRL_PACKET
+		assert(packet->buf_control == TRACE_CTRL_PACKET); 
+		free(packet->buffer);
+		packet->buffer = NULL;
+	}
+
+	//#1. Set packet fields
+	//TRACE_CTRL_EXTERNAL means buffer memory is owned by an external source
+	packet->buf_control = TRACE_CTRL_EXTERNAL;
+	packet->type = TRACE_RT_DATA_SPDK; //XXX - does it affect something?
+
+	//#2. Read a packet . We wait here forever till packet appears.
+	while (1) 
+	{
+		//if we got Ctrl-C from one of our utilities, etc
+		if (libtrace_halt)
+		{
+			printf("[got halt]\n");
+			return READ_EOF;
+		}
+
+		if (queue_num)
+		{
+			pkt = queue_de();
+			if (pkt)
+			{
+				numbytes = pkt->len;
+				debug("have packet with len %d, left in queue: %d \n", numbytes, queue_num);
+				break;
+			}
+		}
+		usleep(10000);	//to avoid eating 100% cpu if no packets
+	}
+	if (numbytes == -1) 
+	{
+		trace_set_err(libtrace, errno, "Reading packet failed");
+		return -1;
+	}
+	else if (numbytes == 0)
+		return 0;
+
+	//#3. Get pointer from packet and assign it to packet->buffer
+	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) 
+	{
+		packet->buffer = pkt->ptr;
+		packet->capture_length = pkt->len;
+		packet->payload = packet->buffer;
+		packet->wire_length = pkt->len + WIRELEN_DROPLEN;
+		debug("pointer to packet: %p \n", packet->buffer);
+                if (!packet->buffer) 
+		{
+                        trace_set_err(libtrace, errno, 
+				      "Cannot alloc memory or have invalid pointer to packet");
+                        return -1;
+                }
+        }
+
+	if (lodp_prepare_packet(libtrace, packet, packet->buffer, packet->type, flags))
+		return -1;
+
+	//we don't need a queue packet cover anymore, but we keep ptr to packet and len
+	//in packet->buffer and packet->capture_length
+	free(pkt);
 
 	return numbytes;
 }
@@ -580,8 +937,11 @@ static void spdk_fin_packet(libtrace_packet_t *packet)
 
 	if (packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
-		free(packet->buffer);
-		packet->buffer = NULL;
+                if (packet->buffer)
+                {
+			free(packet->buffer);
+			packet->buffer = NULL;
+		}
 	}
 }
 

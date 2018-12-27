@@ -28,6 +28,7 @@
 #include "../lib/bdev/raid/bdev_raid.h"
 #include "../lib/bdev/nvme/bdev_nvme.h"
 
+#define WIRELEN_DROPLEN 4
 #define ERR_SIZE 512
 #define DEVNAME_SIZE 32
 #define NVME_MAX_BDEVS_PER_RPC 32
@@ -41,6 +42,9 @@
 #define DEVICE_NAME_NQN "s4msungnqn"
 
 //options
+#define MAX_PACKET_SIZE 1600
+#define BUFFER_SIZE 1048576
+#define ERROR_DBG
 #define DEBUG
 //#define HL_DEBUGS		//high level debugs - on writing buffers and counting callbacks
 
@@ -49,6 +53,12 @@
  #define debug(x...) printf(x)
 #else
  #define debug(x...)
+#endif
+
+#ifdef ERROR_DBG
+ #define error(x...) printf("[error] " x)
+#else
+ #define error(x...)
 #endif
 
 //------------------ spdk structs ----------------------------------------------
@@ -100,6 +110,7 @@ typedef struct spdk_format_data_s
         uint64_t num_blocks;
 	uint64_t bytes;
 	uint64_t max_offset;
+	uint64_t overwrap_read_cnt;
 	pls_thread_t *t;
 	int num_threads;		//keep number of threads passed from utility command line
 	void *pkt;			//store received packet here
@@ -131,13 +142,15 @@ typedef struct pckt_s
 
 pls_thread_t pls_ctrl_thread;
 
+void pkt_parser(void *bf);
+
 //queue implementation----------------------------------------------------------
 //input queue (on server)
-pckt_t *queue_head = NULL;
-pckt_t *queue_tail = NULL;
-int queue_num = 0;
-int pshared;
-pthread_spinlock_t queue_lock;
+static pckt_t *queue_head = NULL;
+static pckt_t *queue_tail = NULL;
+static int queue_num = 0;
+static int pshared;
+static pthread_spinlock_t queue_lock;
 
 static int queue_add(pckt_t *pkt)
 {
@@ -313,7 +326,7 @@ static void pls_bdev_read_done_cb(struct spdk_bdev_io *bdev_io, bool success, vo
         if (success)
         {
                 t->read_complete = true;
-                global.stat_read_bytes += BUFFER_SIZE;
+                //global.stat_read_bytes += BUFFER_SIZE;
                 __atomic_fetch_add(&cnt, 1, __ATOMIC_SEQ_CST);
                 debug("read completed successfully\n");
         }
@@ -460,7 +473,7 @@ static int spdk_init_input(libtrace_t *libtrace)
         }
 	/* Make our first stream */
 	FORMAT(libtrace)->per_stream = libtrace_list_init(sizeof(spdk_per_stream_t));
-	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so its ok to alloc on stack.
+	libtrace_list_push_back(FORMAT(libtrace)->per_stream, &stream);//copies inside, so ok to alloc on stack.
 
 	if (spdk_init_environment(libtrace->uridata, FORMAT(libtrace), err, sizeof(err))) 
 	{
@@ -549,6 +562,8 @@ static void* reader_thread_f(void *arg)
 {
 	int rv;
 	libtrace_t *libtrace = (libtrace_t*)arg;
+	uint64_t nbytes = BUFFER_SIZE;
+        uint64_t offset = 0;
 	void *bf = NULL;
 
         //set higher priority
@@ -559,21 +574,21 @@ static void* reader_thread_f(void *arg)
 	if (!fd)
 	{
                 printf("failed to get format data ptr\n");
-                rv = -1; return rv;
+                rv = -1; return NULL;
 	}
 
 	pls_thread_t *t = FORMAT(libtrace)->t;
 	if (!t)
 	{
                 printf("failed to get thread ptr\n");
-                rv = -1; return rv;
+                rv = -1; return NULL;
 	}
 
         t->ring = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 4096, SPDK_ENV_SOCKET_ID_ANY);
         if (!t->ring)
         {
                 printf("failed to allocate ring\n");
-                rv = -1; return rv;
+                rv = -1; return NULL;
         }
 
         t->thread = spdk_allocate_thread(pls_send_msg, pls_start_poller,
@@ -582,7 +597,7 @@ static void* reader_thread_f(void *arg)
         {
                 spdk_ring_free(t->ring);
                 SPDK_ERRLOG("failed to allocate thread\n");
-                rv = -1; return rv;
+                rv = -1; return NULL;
         }
 
         TAILQ_INIT(&t->pollers);
@@ -593,14 +608,14 @@ static void* reader_thread_f(void *arg)
         if (!raid_cfg)
         {
                 printf("<failed to get raid config>\n");
-                rv = 1; return rv;
+                rv = 1; return NULL;
         }
 
         t->pls_target.bd = &raid_cfg->raid_bdev->bdev;
         if (!t->pls_target.bd)
         {
                 printf("<failed to get raid device from config>\n");
-                rv = 1; return rv;
+                rv = 1; return NULL;
         }
         else
                 printf("got raid device with name [%s]\n", t->pls_target.bd->name);
@@ -609,7 +624,7 @@ static void* reader_thread_f(void *arg)
         if (rv)
         {
                 printf("failed to open device\n");
-                return rv;
+                return NULL;
         }
 
         fd->block_size = spdk_bdev_get_block_size(t->pls_target.bd);
@@ -626,7 +641,7 @@ static void* reader_thread_f(void *arg)
         {
                 printf("Unable to get I/O channel for bdev.\n");
                 spdk_bdev_close(t->pls_target.desc);
-                rv = -1; return rv;
+                rv = -1; return NULL;
         }
 
         while(1)
@@ -646,14 +661,14 @@ static void* reader_thread_f(void *arg)
 		else
 		{
 			offset += nbytes;
-			readbytes += nbytes;
+			//readbytes += nbytes;
 		}
-		if (offset + BUFFER_SIZE > global.max_offset)
+		if (offset + BUFFER_SIZE > fd->max_offset)
 		{
-                	global.overwrap_read_cnt++;
+                	fd->overwrap_read_cnt++;
                         offset = 0;
                         printf("read overwrap: %lu. read offset reset to 0\n", 
-				global.overwrap_read_cnt);
+				fd->overwrap_read_cnt);
                 }
 
 		/*need to wait for bdev read completion first*/
@@ -750,6 +765,53 @@ static int spdk_fin_output(libtrace_out_t *libtrace)
 	debug("%s() \n", __func__);
 
 	return rv;
+}
+
+/*
+Converts a buffer containing a packet record into a libtrace packet
+should be called in odp_read_packet()
+Updates internal trace and packet details, such as payload pointers,
+loss counters and packet types to match the packet record provided
+in the buffer. This is a zero-copy function.
+*/
+static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *packet,
+		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
+{
+	debug("%s() \n", __func__);
+
+	//in theory we don't have packets allocated with TRACE_CTRL_PACKET
+	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
+                free(packet->buffer);
+
+        if ((flags & TRACE_PREP_OWN_BUFFER) == TRACE_PREP_OWN_BUFFER) {
+                packet->buf_control = TRACE_CTRL_PACKET;
+        } else
+                packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
+
+/*	void *header;			**< Pointer to the framing header *
+ *	void *payload;			**< Pointer to the link layer *
+ *	void *buffer;			**< Allocated buffer */
+        packet->buffer = buffer;
+        packet->header = buffer;
+
+/*	MOVED THIS PART to lodp_read_packet()
+	-----
+	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
+	packet->capture_length = FORMAT(libtrace)->pkt_len;
+	packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+	-----
+*/
+	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
+	packet->type = rt_type;
+
+#if 0
+	if (libtrace->format_data == NULL) {
+		if (odp_init_input(libtrace))
+			return -1;
+	}
+#endif
+
+	return 0;
 }
 
 #if 0
@@ -882,54 +944,7 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	return numbytes;
 }
 
-/*
-Converts a buffer containing a packet record into a libtrace packet
-should be called in odp_read_packet()
-Updates internal trace and packet details, such as payload pointers,
-loss counters and packet types to match the packet record provided
-in the buffer. This is a zero-copy function.
-*/
 
-
-static int lodp_prepare_packet(libtrace_t *libtrace UNUSED, libtrace_packet_t *packet,
-		void *buffer, libtrace_rt_types_t rt_type, uint32_t flags) 
-{
-	debug("%s() \n", __func__);
-
-	//in theory we don't have packets allocated with TRACE_CTRL_PACKET
-	if (packet->buffer != buffer && packet->buf_control == TRACE_CTRL_PACKET)
-                free(packet->buffer);
-
-        if ((flags & TRACE_PREP_OWN_BUFFER) == TRACE_PREP_OWN_BUFFER) {
-                packet->buf_control = TRACE_CTRL_PACKET;
-        } else
-                packet->buf_control = TRACE_CTRL_EXTERNAL; //XXX - we already set it in odp_read_packet()
-
-/*	void *header;			**< Pointer to the framing header *
- *	void *payload;			**< Pointer to the link layer *
- *	void *buffer;			**< Allocated buffer */
-        packet->buffer = buffer;
-        packet->header = buffer;
-
-/*	MOVED THIS PART to lodp_read_packet()
-	-----
-	packet->payload = FORMAT(libtrace)->l2h; //XXX - maybe do it as in dpdk with dpdk_get_framing_length?
-	packet->capture_length = FORMAT(libtrace)->pkt_len;
-	packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
-	-----
-*/
-	//packet->payload = (char *)buffer + dpdk_get_framing_length(packet);
-	packet->type = rt_type;
-
-#if 0
-	if (libtrace->format_data == NULL) {
-		if (odp_init_input(libtrace))
-			return -1;
-	}
-#endif
-
-	return 0;
-}
 
 static void spdk_fin_packet(libtrace_packet_t *packet)
 {

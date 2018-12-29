@@ -45,7 +45,7 @@
 #define MAX_PACKET_SIZE 1600
 #define BUFFER_SIZE 1048576
 #define ERROR_DBG
-#define DEBUG
+//#define DEBUG
 //#define HL_DEBUGS		//high level debugs - on writing buffers and counting callbacks
 
 #define FORMAT(x) ((spdk_format_data_t *)x->format_data)
@@ -140,7 +140,15 @@ typedef struct pckt_s
         struct pckt_s *next;
 } pckt_t;
 
+typedef struct stat_s
+{
+	uint64_t pkts_read;
+	uint64_t pkts_finished;
+} stat_t;
+
+stat_t pkt_stat;
 pls_thread_t pls_ctrl_thread;
+pthread_t poller_thread;
 
 void pkt_parser(void *bf);
 
@@ -174,6 +182,8 @@ static int queue_add(pckt_t *pkt)
         pkt->next = NULL;
         queue_num++;
 	pthread_spin_unlock(&queue_lock);
+
+	pkt_stat.pkts_read++;
 
 	return queue_num;
 }
@@ -232,7 +242,7 @@ static size_t pls_poll_thread(pls_thread_t *thread)
         struct pls_poller *p, *tmp;
         size_t count;
 
-        printf("%s() called \n", __func__);
+        debug("%s() called \n", __func__);
 
         /* Process new events */
         count = spdk_ring_dequeue(thread->ring, (void **)&msg, 1);
@@ -322,7 +332,6 @@ static void pls_bdev_read_done_cb(struct spdk_bdev_io *bdev_io, bool success, vo
         static unsigned int cnt = 0;
         pls_thread_t *t = (pls_thread_t*)cb_arg;
 
-        /*printf("bdev read is done\n");*/
         if (success)
         {
                 t->read_complete = true;
@@ -557,6 +566,19 @@ void pkt_parser(void *bf)
 	}
 }
 
+static void* poller_thread_f(void *arg)
+{
+	libtrace_t *libtrace = (libtrace_t*)arg;
+
+	while(1)
+	{
+		pls_poll_thread(FORMAT(libtrace)->t);
+		//usleep(100);
+	}
+
+	return NULL;
+}
+
 //we run it in separate thread to avoid blocking issues
 static void* reader_thread_f(void *arg)
 {
@@ -565,6 +587,8 @@ static void* reader_thread_f(void *arg)
 	uint64_t nbytes = BUFFER_SIZE;
         uint64_t offset = 0;
 	void *bf = NULL;
+
+	debug("reader thread started\n");
 
         //set higher priority
         rv = nice(-20);
@@ -692,9 +716,18 @@ static int spdk_start_input(libtrace_t *libtrace)
 	//XXX - check pthread_t address
 	rv = pthread_create(&FORMAT(libtrace)->t->pthread_desc, NULL, reader_thread_f, libtrace);
 	if (rv)
-		error("failed to create a thread!\n");
+		error("failed to create a reader thread!\n");
 	else
-		debug("thread created successfully\n");
+	{	debug("reader thread created successfully\n");
+	}
+
+	//create poller thread - to get callbacks
+	rv = pthread_create(&poller_thread, NULL, poller_thread_f, libtrace);
+	if (rv)
+		error("failed to create a poller thread!\n");
+	else
+	{	debug("poller thread created successfully\n");
+	}
 
 	return rv;
 }
@@ -874,6 +907,13 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	
 	debug("%s() \n", __func__);
 
+	//print stats
+	if (pkt_stat.pkts_read % 10000 == 0)
+	{
+		printf("total pkts read: %lu, total pkts finished: %lu , in queue: %d\n",
+			pkt_stat.pkts_read, pkt_stat.pkts_finished, queue_num);
+	}
+
 	//#0. Free the last packet buffer
 	if (packet->buffer) 
 	{
@@ -895,6 +935,8 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 		if (libtrace_halt)
 		{
 			printf("[got halt]\n");
+			printf("total pkts read: %lu, total pkts finished: %lu \n",
+				pkt_stat.pkts_read, pkt_stat.pkts_finished);
 			return READ_EOF;
 		}
 
@@ -904,11 +946,17 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			if (pkt)
 			{
 				numbytes = pkt->len;
-				debug("have packet with len %d, left in queue: %d \n", numbytes, queue_num);
+				debug("have packet with len %d, left in queue: %d \n",
+				       numbytes, queue_num);
 				break;
 			}
 		}
-		usleep(10000);	//to avoid eating 100% cpu if no packets
+		else
+		{
+			printf("queue is empty\n");
+			usleep(10000);
+		}
+		//usleep(10000);	//to avoid eating 100% cpu if no packets
 	}
 	if (numbytes == -1) 
 	{
@@ -944,8 +992,6 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	return numbytes;
 }
 
-
-
 static void spdk_fin_packet(libtrace_packet_t *packet)
 {
 	debug("%s() \n", __func__);
@@ -956,6 +1002,7 @@ static void spdk_fin_packet(libtrace_packet_t *packet)
                 {
 			free(packet->buffer);
 			packet->buffer = NULL;
+			pkt_stat.pkts_finished++;
 		}
 	}
 }
@@ -1150,7 +1197,8 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 		//Bind thread and its per_thread struct
 		if(t->type == THREAD_PERPKT) 
 		{
-			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream, t->perpkt_num)->data;
+			t->format_data = libtrace_list_get_index(FORMAT(libtrace)->per_stream,
+								 t->perpkt_num)->data;
 			if (t->format_data == NULL) 
 			{
 				trace_set_err(libtrace, TRACE_ERR_INIT_FAILED,
@@ -1237,6 +1285,7 @@ static struct libtrace_format_t spdk = {
 
 void spdk_constructor(void) 
 {
-	debug("registering spdk struct with address: %p , init_output: %p\n", &spdk, spdk.init_output);
+	debug("registering spdk struct with address: %p , init_output: %p\n", 
+	      &spdk, spdk.init_output);
 	register_format(&spdk);
 }

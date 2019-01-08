@@ -42,6 +42,7 @@
 #define DEVICE_NAME_NQN "s4msungnqn"
 
 //options
+#define SPIN_LOCK
 #define MAX_PACKET_SIZE 1600
 #define BUFFER_SIZE 1048576
 #define ERROR_DBG
@@ -157,8 +158,12 @@ void pkt_parser(void *bf);
 static pckt_t *queue_head = NULL;
 static pckt_t *queue_tail = NULL;
 static int queue_num = 0;
-static int pshared;
+#ifdef SPIN_LOCK
 static pthread_spinlock_t queue_lock;
+static int pshared;
+#else
+pthread_mutex_t mutex_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 static int queue_add(pckt_t *pkt)
 {
@@ -168,7 +173,11 @@ static int queue_add(pckt_t *pkt)
 		return -1;
 	}
 
+#ifdef SPIN_LOCK
 	pthread_spin_lock(&queue_lock);
+#else
+	pthread_mutex_lock(&mutex_lock);
+#endif
         if (!queue_head)
         {
                 queue_head = pkt;
@@ -181,7 +190,11 @@ static int queue_add(pckt_t *pkt)
         }
         pkt->next = NULL;
         queue_num++;
+#ifdef SPIN_LOCK
 	pthread_spin_unlock(&queue_lock);
+#else
+	pthread_mutex_unlock(&mutex_lock);
+#endif
 
 	pkt_stat.pkts_read++;
 
@@ -192,8 +205,12 @@ static pckt_t* queue_de()
 {
         pckt_t *deq = NULL;
 
+#ifdef SPIN_LOCK
 	//pthread_spin_trylock(&queue_lock);
 	pthread_spin_lock(&queue_lock);
+#else
+	pthread_mutex_lock(&mutex_lock);
+#endif
         if (queue_head)
         {
                 deq = queue_head;
@@ -202,7 +219,11 @@ static pckt_t* queue_de()
                         queue_head = queue_head->next;
 			if (!queue_head)
 			{
+#ifdef SPIN_LOCK
 				pthread_spin_unlock(&queue_lock);
+#else
+				pthread_mutex_unlock(&mutex_lock);
+#endif
 				error("we lost head but queue is not empty: %d\n", queue_num);
 				return NULL;
 			}
@@ -212,12 +233,20 @@ static pckt_t* queue_de()
                         queue_head = queue_tail = NULL;
                 }
                 queue_num--;
+#ifdef SPIN_LOCK
 		pthread_spin_unlock(&queue_lock);
+#else
+		pthread_mutex_unlock(&mutex_lock);
+#endif
                 return deq;
         }
         else
 	{
+#ifdef SPIN_LOCK
 		pthread_spin_unlock(&queue_lock);
+#else
+		pthread_mutex_unlock(&mutex_lock);
+#endif
                 return NULL;
 	}
 }
@@ -231,9 +260,6 @@ static pckt_t* queue_create_pckt()
 		memset(p, 0x0, sizeof (pckt_t));
 	return p;
 }
-
-
-
 
 //------------------ spdk functions --------------------------------------------
 static size_t pls_poll_thread(pls_thread_t *thread)
@@ -462,7 +488,9 @@ static int spdk_init_input(libtrace_t *libtrace)
 	spdk_per_stream_t stream;
 	memset(&stream, 0x0, sizeof(spdk_per_stream_t));
 
+#ifdef SPIN_LOCK
 	pthread_spin_init(&queue_lock, pshared);
+#endif
 
 	//init all the data in spdk_format_data_t
 	libtrace->format_data = malloc(sizeof(spdk_format_data_t));
@@ -573,7 +601,7 @@ static void* poller_thread_f(void *arg)
 	while(1)
 	{
 		pls_poll_thread(FORMAT(libtrace)->t);
-		//usleep(100);
+		usleep(2000);
 	}
 
 	return NULL;
@@ -1209,8 +1237,8 @@ static int lodp_pregister_thread(libtrace_t *libtrace, libtrace_thread_t *t, boo
 	}
 	else
 	{
-		debug("trying to register not reading thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
-			t, t->type, t->tid, t->perpkt_num);
+	 debug("trying to register not reading thread : %p , type: %d , tid: %lu , perpkt_num: %d \n", 
+		t, t->type, t->tid, t->perpkt_num);
 	}
 
 	return rv;	

@@ -22,6 +22,8 @@ HEADER1="include"
 HEADER2="platform/linux-dpdk/include"
 HEADER3="platform/linux-dpdk/arch/x86"
 
+#dpdk headers needed to use rte_ring
+DPDK_PATH="/usr/local/include/dpdk"
 SPDK_PATH="/root/spdkp/include"
 ODP_PATH=""
 SEARCH_PATH="/"
@@ -59,7 +61,7 @@ fi
 
 # configuring
 ./bootstrap.sh
-./configure CFLAGS="-g -shared-libgcc -I${ODP_PATH}/${HEADER1} -I${ODP_PATH}/${HEADER2} -I${ODP_PATH}/${HEADER3} -I${SPDK_PATH}"
+./configure CFLAGS="-g -shared-libgcc -I${ODP_PATH}/${HEADER1} -I${ODP_PATH}/${HEADER2} -I${ODP_PATH}/${HEADER3} -I${SPDK_PATH}  -I${DPDK_PATH}"
 
 #if [ $NUMCORES -le 2 ]; then
 #	echo -e "${WHITE}configuring for laptop ${NC}"

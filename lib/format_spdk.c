@@ -13,6 +13,8 @@
 #include "format_helper.h"
 #include "wandio.h"
 #include "rt_protocol.h"
+//dpdk. /usr/local/include/dpdk/rte_ring.h
+#include <rte_ring.h>			//for lockless ring buffer (lockless queue)
 //spdk
 #include "spdk/stdinc.h"
 #include "spdk/bdev.h"
@@ -42,6 +44,8 @@
 #define DEVICE_NAME_NQN "s4msungnqn"
 
 //options
+#define QUEUE_RING_SIZE 1048576
+#define LOCKLESS
 #define SPIN_LOCK
 #define MAX_PACKET_SIZE 1600
 #define BUFFER_SIZE 1048576
@@ -112,6 +116,7 @@ typedef struct spdk_format_data_s
 	uint64_t bytes;
 	uint64_t max_offset;
 	uint64_t overwrap_read_cnt;
+	struct rte_ring *rbuf;		//ptr to dpdk ring buffer, used for lockless queue
 	pls_thread_t *t;
 	int num_threads;		//keep number of threads passed from utility command line
 	void *pkt;			//store received packet here
@@ -151,7 +156,7 @@ stat_t pkt_stat;
 pls_thread_t pls_ctrl_thread;
 pthread_t poller_thread;
 
-void pkt_parser(void *bf);
+void pkt_parser(void *bf, spdk_format_data_t *fd);
 
 //queue implementation----------------------------------------------------------
 //input queue (on server)
@@ -165,6 +170,7 @@ static int pshared;
 pthread_mutex_t mutex_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
+#ifndef LOCKLESS
 static int queue_add(pckt_t *pkt)
 {
 	if (!pkt)
@@ -250,6 +256,7 @@ static pckt_t* queue_de()
                 return NULL;
 	}
 }
+#endif
 
 static pckt_t* queue_create_pckt()
 {
@@ -473,6 +480,15 @@ static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *er
 	//free thread to allocate it one more time. special for libtrace
 	spdk_free_thread();
 
+	//init dpdk ring buffer
+	fd->rbuf = rte_ring_create("queue_ring", QUEUE_RING_SIZE, SOCKET_ID_ANY,
+					RING_F_SP_ENQ | RING_F_SC_DEQ);
+	if (!fd->rbuf)
+	{
+		error("failed to create rte_ring. exiting.\n");
+		return -1;
+	}
+
         return rv;
 }
 
@@ -523,7 +539,7 @@ static int spdk_init_input(libtrace_t *libtrace)
 }
 
 //takes buf. parses it. add packets to the queue
-void pkt_parser(void *bf)
+void pkt_parser(void *bf, spdk_format_data_t *fd)
 {
 	int i, j;
 	unsigned char *p = (unsigned char*)bf;
@@ -584,10 +600,26 @@ void pkt_parser(void *bf)
 				memcpy(pkt->ptr, p+i, len);
 				i += len - 1; //we skip till next 0xEE
 				new_len = false;
+#ifdef LOCKLESS
+				num = rte_ring_sp_enqueue(fd->rbuf, pkt);
+#else
 				num = queue_add(pkt);
-				if (num > 0)
+#endif
+				if (num >= 0)
 				{
+#ifdef LOCKLESS
 					debug("packet added to queue. now in queue: %d\n", num);
+#else
+					unsigned n = rte_ring_count(fd->rbuf);
+					debug("packets in lockless ring: %u\n", n);
+#endif
+				}
+				else
+				{
+					error("failed to add packet in queue/ring: %d \n", num);
+					if (pkt->ptr)
+					{	free(pkt->ptr); pkt->ptr = NULL;
+					}
 				}
 			}
 		}
@@ -730,7 +762,7 @@ static void* reader_thread_f(void *arg)
                 }
 
 		/* parse buf with packets and add packets to queue */
-		pkt_parser(bf);
+		pkt_parser(bf, fd); //@fd - pointer to format data
 
 		spdk_dma_free(bf);
 	}
@@ -811,7 +843,7 @@ static int spdk_start_output(libtrace_out_t *libtrace)
 static int spdk_fin_input(libtrace_t *libtrace) 
 {
 	int rv = 0;
-	(void)libtrace;
+	rte_ring_free(FORMAT(libtrace)->rbuf);
 
 	debug("%s() \n", __func__);
 
@@ -929,6 +961,7 @@ static int spdk_read_pack(libtrace_t *libtrace)
 //So endless loop while no packets and return bytes read in case there is a packet (no one checks returned bytes)
 static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet) 
 {
+	int rv = 0;
 	uint32_t flags = 0;
 	int numbytes = 0;
 	pckt_t *pkt = NULL;
@@ -938,6 +971,7 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	//print stats
 	if (pkt_stat.pkts_read % 10000 == 0)
 	{
+		//XXX - rework - add debug for lockless ring too
 		printf("total pkts read: %lu, total pkts finished: %lu , in queue: %d\n",
 			pkt_stat.pkts_read, pkt_stat.pkts_finished, queue_num);
 	}
@@ -967,7 +1001,22 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 				pkt_stat.pkts_read, pkt_stat.pkts_finished);
 			return READ_EOF;
 		}
-
+#ifdef LOCKLESS
+		rv = rte_ring_sc_dequeue(FORMAT(libtrace)->rbuf, (void **)&pkt);
+		if (!rv)
+		{
+			if (pkt)
+			{
+				numbytes = pkt->len;
+				debug("have packet with len %d \n", numbytes); 
+			}
+		}
+		else
+		{
+			printf("ring is empty\n");
+			usleep(10000);
+		}
+#else
 		if (queue_num)
 		{
 			pkt = queue_de();
@@ -985,6 +1034,7 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			usleep(10000);
 		}
 		//usleep(10000);	//to avoid eating 100% cpu if no packets
+#endif
 	}
 	if (numbytes == -1) 
 	{

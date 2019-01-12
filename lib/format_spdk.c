@@ -44,7 +44,7 @@
 #define DEVICE_NAME_NQN "s4msungnqn"
 
 //options
-#define QUEUE_RING_SIZE 1048576
+#define QUEUE_RING_SIZE 1048576*8
 #define LOCKLESS
 #define SPIN_LOCK
 #define MAX_PACKET_SIZE 1600
@@ -488,6 +488,10 @@ static int spdk_init_environment(char *uridata, spdk_format_data_t *fd, char *er
 		error("failed to create rte_ring. exiting.\n");
 		return -1;
 	}
+	else
+	{
+		printf("rte_ring created successfully \n");
+	}
 
         return rv;
 }
@@ -608,10 +612,11 @@ void pkt_parser(void *bf, spdk_format_data_t *fd)
 				if (num >= 0)
 				{
 #ifdef LOCKLESS
-					debug("packet added to queue. now in queue: %d\n", num);
+					pkt_stat.pkts_read++;
+					debug("packets in lockless ring: %u, free entries: %u\n",
+					      rte_ring_count(fd->rbuf), rte_ring_free_count(fd->rbuf));
 #else
-					unsigned n = rte_ring_count(fd->rbuf);
-					debug("packets in lockless ring: %u\n", n);
+					debug("packet added to queue. now in queue: %d\n", num);
 #endif
 				}
 				else
@@ -624,6 +629,8 @@ void pkt_parser(void *bf, spdk_format_data_t *fd)
 			}
 		}
 	}
+
+	debug("%s() exited \n", __func__);
 }
 
 static void* poller_thread_f(void *arg)
@@ -971,9 +978,14 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	//print stats
 	if (pkt_stat.pkts_read % 10000 == 0)
 	{
-		//XXX - rework - add debug for lockless ring too
+#ifdef LOCKLESS
+		printf("total pkts read: %lu, total pkts finished: %lu , in ring: %u\n",
+			pkt_stat.pkts_read, pkt_stat.pkts_finished,
+			rte_ring_count(FORMAT(libtrace)->rbuf));
+#else
 		printf("total pkts read: %lu, total pkts finished: %lu , in queue: %d\n",
 			pkt_stat.pkts_read, pkt_stat.pkts_finished, queue_num);
+#endif
 	}
 
 	//#0. Free the last packet buffer
@@ -1008,13 +1020,15 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 			if (pkt)
 			{
 				numbytes = pkt->len;
-				debug("have packet with len %d \n", numbytes); 
+				debug("ring dequeue. packet with len %d. left: %u \n",
+					numbytes, rte_ring_count(FORMAT(libtrace)->rbuf));
+				break;
 			}
 		}
 		else
 		{
 			printf("ring is empty\n");
-			usleep(10000);
+			usleep(100000);
 		}
 #else
 		if (queue_num)

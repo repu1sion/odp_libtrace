@@ -51,7 +51,7 @@
 #define BUFFER_SIZE 1048576
 #define ERROR_DBG
 //#define DEBUG
-//#define HL_DEBUGS		//high level debugs - on writing buffers and counting callbacks
+#define HL_DEBUGS		//high level debugs - on writing buffers and counting callbacks
 
 #define FORMAT(x) ((spdk_format_data_t *)x->format_data)
 #ifdef DEBUG
@@ -160,9 +160,11 @@ void pkt_parser(void *bf, spdk_format_data_t *fd);
 
 //queue implementation----------------------------------------------------------
 //input queue (on server)
+#ifndef LOCKLESS
 static pckt_t *queue_head = NULL;
 static pckt_t *queue_tail = NULL;
 static int queue_num = 0;
+#endif
 #ifdef SPIN_LOCK
 static pthread_spinlock_t queue_lock;
 static int pshared;
@@ -622,6 +624,7 @@ void pkt_parser(void *bf, spdk_format_data_t *fd)
 				else
 				{
 					error("failed to add packet in queue/ring: %d \n", num);
+					usleep(100000);
 					if (pkt->ptr)
 					{	free(pkt->ptr); pkt->ptr = NULL;
 					}
@@ -640,7 +643,7 @@ static void* poller_thread_f(void *arg)
 	while(1)
 	{
 		pls_poll_thread(FORMAT(libtrace)->t);
-		usleep(2000);
+		//usleep(2700);
 	}
 
 	return NULL;
@@ -675,7 +678,8 @@ static void* reader_thread_f(void *arg)
                 rv = -1; return NULL;
 	}
 
-        t->ring = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 4096, SPDK_ENV_SOCKET_ID_ANY);
+        t->ring = spdk_ring_create(SPDK_RING_TYPE_MP_SC, 4096, 
+					SPDK_ENV_SOCKET_ID_ANY);
         if (!t->ring)
         {
                 printf("failed to allocate ring\n");
@@ -683,7 +687,7 @@ static void* reader_thread_f(void *arg)
         }
 
         t->thread = spdk_allocate_thread(pls_send_msg, pls_start_poller,
-                                 pls_stop_poller, (void*)t, "pls_reader_thread");
+                    	pls_stop_poller, (void*)t, "pls_reader_thread");
         if (!t->thread)
         {
                 spdk_ring_free(t->ring);
@@ -709,9 +713,11 @@ static void* reader_thread_f(void *arg)
                 rv = 1; return NULL;
         }
         else
-                printf("got raid device with name [%s]\n", t->pls_target.bd->name);
+                printf("got raid device with name [%s]\n", 
+			t->pls_target.bd->name);
 
-        rv = spdk_bdev_open(t->pls_target.bd, 1, NULL, NULL, &t->pls_target.desc);
+        rv = spdk_bdev_open(t->pls_target.bd, 1, NULL, NULL, 
+				&t->pls_target.desc);
         if (rv)
         {
                 printf("failed to open device\n");
@@ -735,6 +741,21 @@ static void* reader_thread_f(void *arg)
                 rv = -1; return NULL;
         }
 
+//------ write to file clean data experiment
+#if 0
+        int f = 0;
+        char fname[256] = {0};
+
+        strcpy(fname, "trace_raid_file");
+        f = open(fname, O_CREAT|O_WRONLY|O_TRUNC);
+        if (!f)
+        {
+                printf("can't create file\n");
+                exit(1);
+        }
+#endif
+//-------
+
         while(1)
         {
                 bf = spdk_dma_zmalloc(nbytes, 0, NULL);
@@ -746,7 +767,7 @@ static void* reader_thread_f(void *arg)
 		t->read_complete = false;
 
 		rv = spdk_bdev_read(t->pls_target.desc, t->pls_target.ch,
-				    bf, offset, nbytes, pls_bdev_read_done_cb, t);
+			bf, offset, nbytes, pls_bdev_read_done_cb, t);
                 if (rv)
 			printf("spdk_bdev_read failed\n");
 		else
@@ -767,10 +788,14 @@ static void* reader_thread_f(void *arg)
                 {
                         usleep(10);
                 }
-
 		/* parse buf with packets and add packets to queue */
 		pkt_parser(bf, fd); //@fd - pointer to format data
+//----- XXX file writing experiment
+#if 0
+		write(f, bf, BUFFER_SIZE);
 
+#endif
+//-----
 		spdk_dma_free(bf);
 	}
 
@@ -978,13 +1003,15 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	//print stats
 	if (pkt_stat.pkts_read % 10000 == 0)
 	{
-#ifdef LOCKLESS
+#ifdef HL_DEBUGS
+	#ifdef LOCKLESS
 		printf("total pkts read: %lu, total pkts finished: %lu , in ring: %u\n",
 			pkt_stat.pkts_read, pkt_stat.pkts_finished,
 			rte_ring_count(FORMAT(libtrace)->rbuf));
-#else
+	#else
 		printf("total pkts read: %lu, total pkts finished: %lu , in queue: %d\n",
 			pkt_stat.pkts_read, pkt_stat.pkts_finished, queue_num);
+	#endif
 #endif
 	}
 
@@ -1027,8 +1054,10 @@ static int spdk_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 		}
 		else
 		{
+#ifdef HL_DEBUGS
 			printf("ring is empty\n");
-			usleep(100000);
+#endif
+			usleep(10000);
 		}
 #else
 		if (queue_num)

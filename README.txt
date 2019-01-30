@@ -6,6 +6,9 @@ run tracesplit in spdk read format:
 2. run tracesplit
 # tracesplit spdk:s erf:trace.erf.gz
 
+tracesplit with max priority:
+# nice -n -20 tracesplit spdk:s erf:trace.erf.gz
+
 or saving spdk to pcap:
 # tracesplit spdk:s pcap:trace.pcap
 

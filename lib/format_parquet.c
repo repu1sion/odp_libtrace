@@ -433,6 +433,11 @@ static int lodp_pause_input(libtrace_t * libtrace)
 	return 0;
 }
 
+static int lodp_flush_output(libtrace_out_t *libtrace)
+{
+        return wandio_wflush(OUTPUT->file);
+}
+
 static int parq_start_output(libtrace_out_t *libtrace) 
 {
 	printf("%s() \n", __func__);
@@ -637,10 +642,10 @@ static int lodp_read_packet(libtrace_t *libtrace, libtrace_packet_t *packet)
 	if (!packet->buffer || packet->buf_control == TRACE_CTRL_EXTERNAL) 
 	{
 		packet->buffer = FORMAT(libtrace)->pkt;
-		packet->capture_length = FORMAT(libtrace)->pkt_len;
+		packet->cached.capture_length = FORMAT(libtrace)->pkt_len;
 		//part below moved from lodp_prepare_packet()
 		packet->payload = FORMAT(libtrace)->l2h; 
-		packet->wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
+		packet->cached.wire_length = FORMAT(libtrace)->pkt_len + WIRELEN_DROPLEN;
 		//-----
 		debug("pointer to packet: %p \n", packet->buffer);
                 if (!packet->buffer) 
@@ -769,9 +774,9 @@ static int lodp_pread_packets(libtrace_t *trace, libtrace_thread_t *t, libtrace_
 		if (!packets[i]->buffer || packets[i]->buf_control == TRACE_CTRL_EXTERNAL) 
 		{
 			packets[i]->buffer = stream->pkt; 
-			packets[i]->capture_length = stream->pkt_len;
+			packets[i]->cached.capture_length = stream->pkt_len;
 			packets[i]->payload = stream->l2h; 
-			packets[i]->wire_length = stream->pkt_len + WIRELEN_DROPLEN;
+			packets[i]->cached.wire_length = stream->pkt_len + WIRELEN_DROPLEN;
 			packets[i]->trace = trace;
 			packets[i]->error = 1;
 			debug("pointer to packet: %p \n", packets[i]->buffer);
@@ -852,7 +857,7 @@ static int lodp_get_capture_length(const libtrace_packet_t *packet)
 		// this won't work probably, as we don't set packet->length anywhere, so can't return it.
 		//pkt_len = (int)trace_get_capture_length(packet);
 		//pkt_len = FORMAT(libtrace)->pkt_len;
-		pkt_len = packet->capture_length;
+		pkt_len = packet->cached.capture_length;
 		debug("packet: %p , length: %d\n", packet, pkt_len);
 		return pkt_len;
 	}
@@ -885,7 +890,7 @@ static int lodp_get_wire_length(const libtrace_packet_t *packet)
 
 	if (packet)
 		//return trace_get_wire_length(packet);
-		return packet->wire_length;
+		return packet->cached.wire_length;
 	else
 	{
 		trace_set_err(packet->trace,TRACE_ERR_BAD_PACKET, "Have no packet");
@@ -1033,6 +1038,7 @@ static struct libtrace_format_t parq = {
         lodp_prepare_packet,		/* prepare_packet - Converts a buffer containing a packet record into a libtrace packet */
 	lodp_fin_packet,                /* fin_packet - Frees any resources allocated for a libtrace packet */
         parq_write_packet,              /* write_packet - Write a libtrace packet to an output trace */
+	lodp_flush_output,
         lodp_get_link_type,    		/* get_link_type - Returns the libtrace link type for a packet */
         NULL,              		/* get_direction */
         NULL,              		/* set_direction */

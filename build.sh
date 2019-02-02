@@ -49,10 +49,11 @@ fi
 # dl and install wandio
 if [ $INSTALL_WANDIO -eq 1 ]; then
 	echo "installing wandio"
-	wget http://research.wand.net.nz/software/wandio/wandio-1.0.4.tar.gz
-	tar zxvf wandio-1.0.4.tar.gz
-	cd wandio-1.0.4/
-	./configure 
+	wget https://research.wand.net.nz/software/wandio/wandio-4.0.0.tar.gz
+	#wget http://research.wand.net.nz/software/wandio/wandio-1.0.4.tar.gz
+	tar zxvf wandio-4.0.0.tar.gz
+	cd wandio-4.0.0/
+	./configure
 	make
 	make install
 	ldconfig

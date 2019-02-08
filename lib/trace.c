@@ -170,6 +170,7 @@ static void trace_init(void)
 	parq_constructor();
 	kafka_constructor();
 	spdk_constructor();
+	rbd_constructor();
 	acce_constructor();
 	}
 }

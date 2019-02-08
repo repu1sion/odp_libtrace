@@ -442,11 +442,12 @@ enum base_format_t {
 	TRACE_FORMAT_KAFKA        =20,
 	TRACE_FORMAT_ACCE         =21,
 	TRACE_FORMAT_SPDK         =22,
-        TRACE_FORMAT_PCAPNG       =23,    /**< PCAP-NG trace file */
-        TRACE_FORMAT_NDAG         =24,    /**< DAG multicast over a network */
-	TRACE_FORMAT_DPDK_NDAG    =25,    /**< DAG multicast over a network, received via DPDK */
-        TRACE_FORMAT_ETSILIVE     =26,    /**< ETSI LI over a network */
-	TRACE_FORMAT_UNKNOWN      =27 	  /** Unknown format */
+	TRACE_FORMAT_RBD          =23,
+        TRACE_FORMAT_PCAPNG       =24,    /**< PCAP-NG trace file */
+        TRACE_FORMAT_NDAG         =25,    /**< DAG multicast over a network */
+	TRACE_FORMAT_DPDK_NDAG    =26,    /**< DAG multicast over a network, received via DPDK */
+        TRACE_FORMAT_ETSILIVE     =27,    /**< ETSI LI over a network */
+	TRACE_FORMAT_UNKNOWN      =28 	  /** Unknown format */
 };
 
 /** RT protocol packet types */
@@ -506,6 +507,7 @@ typedef enum {
 	TRACE_RT_DATA_KAFKA=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_KAFKA,
 	TRACE_RT_DATA_ACCE=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_ACCE,
 	TRACE_RT_DATA_SPDK=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_SPDK,
+	TRACE_RT_DATA_RBD=TRACE_RT_DATA_SIMPLE+TRACE_FORMAT_RBD,
 
         TRACE_RT_DATA_ETSILI = TRACE_RT_DATA_SIMPLE + TRACE_FORMAT_ETSILIVE,
 

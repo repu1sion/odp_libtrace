@@ -56,7 +56,7 @@ export LDFLAGS += $(SAVED_LDFLAGS)
 endif
 
 #ODP support
-NATIVEFORMATS+= format_odp.c format_parquet.c format_kafka.c format_accelio.c format_spdk.c
+NATIVEFORMATS+= format_odp.c format_parquet.c format_kafka.c format_accelio.c format_spdk.c format_rbd.c
 if HAVE_WANDDER
 ETSISOURCES=format_etsilive.c
 else
